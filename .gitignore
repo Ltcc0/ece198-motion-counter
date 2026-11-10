@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.py[cod]
+.DS_Store
+runtime/
+.env
+.env.*
+!.env.example
+build/
+*.hex
+*.elf
+*.map
+*.o
+*.d
+*.log
+.pytest_cache/

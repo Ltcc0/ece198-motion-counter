@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="theme-color" content="#f4f3ec">
+  <title>STEPS — Movement Counter</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <div class="app-shell">
+    <header class="site-header">
+      <a class="brand" href="/" aria-label="STEPS movement counter home">
+        <span class="brand-symbol" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span>STEPS <span class="brand-divider">/</span> <span class="brand-sub">Movement Counter</span></span>
+      </a>
+      <div class="header-actions">
+        <button class="text-button records-button" id="recordsButton" type="button" aria-haspopup="dialog">Session records</button>
+        <span class="connection-pill" id="connectionPill"><span class="status-dot"></span><span id="connectionLabel">Disconnected</span></span>
+        <button class="text-button setup-button" id="setupButton" type="button" aria-haspopup="dialog">Device setup <span aria-hidden="true">↗</span></button>
+      </div>
+    </header>
+
+    <main>
+      <section class="intro" aria-labelledby="pageTitle">
+        <div><p class="eyebrow">ECE198 PROTOTYPE</p><h1 id="pageTitle">Movement participation,<br><em>made visible.</em></h1></div>
+        <button class="button button-outline presentation-toggle" id="presentationButton" type="button" aria-pressed="false"><span class="expand-icon" aria-hidden="true">⛶</span><span id="presentationLabel">Presentation mode</span></button>
+      </section>
+
+      <section class="session-stage" aria-label="Live movement session">
+        <div class="counter-pane">
+          <div class="session-topline"><p class="eyebrow" id="sessionEyebrow">LIVE SESSION</p><span class="session-id" id="sessionId">Ready when you are</span></div>
+          <div class="count-label">Movement count <span class="unit-tag">PASSAGES</span></div>
+          <div class="count-row"><div class="count-value" id="countValue" aria-label="No movement count available">—</div><span class="count-mark" aria-hidden="true">↗</span></div>
+          <p class="count-rule">One pass = one count.<br><strong>Down + up = two counts.</strong></p>
+          <div class="session-metrics"><div><span class="metric-label">Session duration</span><span class="metric-value mono" id="durationValue">—</span></div><div class="metric-divider"></div><div><span class="metric-label">Live distance</span><span class="metric-value"><span id="distanceValue">—</span><span class="metric-unit" id="distanceUnit"> cm</span></span></div></div>
+          <div class="session-actions"><button class="button button-primary" type="button" id="startButton" disabled><span class="play-icon" aria-hidden="true"></span>Start session</button><button class="button button-stop" type="button" id="stopButton" disabled><span class="stop-icon" aria-hidden="true"></span>Stop &amp; save</button></div>
+          <div class="phase-feedback"><span class="state-indicator" id="stateIndicator" data-state="disconnected"></span><span id="stateTitle">Waiting for connection</span></div>
+          <p class="action-feedback" id="actionFeedback" aria-live="polite">Connect your Arduino to begin.</p>
+        </div>
+
+      </section>
+
+
+    </main>
+    <footer><span>STEPS <span aria-hidden="true">/</span> ECE198</span><span>Classroom prototype for participation logging.</span></footer>
+  </div>
+
+  <dialog id="recordsDialog" class="records-dialog" aria-labelledby="historyTitle">
+        <div class="section-heading"><div><p class="eyebrow">SESSION RECORDS</p><h2 id="historyTitle">Session records</h2></div><div class="history-actions"><button class="text-button" id="refreshHistoryButton" type="button" disabled><span aria-hidden="true">↻</span> Refresh</button><a class="text-button export-link" id="exportLink" href="/api/export.csv" download aria-disabled="true"><span aria-hidden="true">↓</span> Export CSV</a><button class="icon-button" id="closeRecordsButton" type="button" aria-label="Close session records">×</button></div></div>
+        <div class="history-table-wrap"><table><thead><tr><th scope="col">Session</th><th scope="col">Count</th><th scope="col">Duration</th><th scope="col">Record type</th><th scope="col">Saved</th></tr></thead><tbody id="historyBody"></tbody></table><div class="history-empty" id="historyEmpty"><span class="empty-mark" aria-hidden="true">↗</span><h3>Your sessions will appear here.</h3><p>Start a session, make a few passes, then choose Stop &amp; save.</p></div></div>
+        <p class="history-note" id="historyNote">Records describe participation. A movement count is not a measure of movement quality or clinical progress.</p>
+  </dialog>
+
+  <dialog id="setupDialog" class="setup-dialog" aria-labelledby="setupTitle">
+    <div class="drawer-header"><div><p class="eyebrow">CONNECTION</p><h2 id="setupTitle">Device setup</h2></div><button class="icon-button" id="closeSetupButton" type="button" aria-label="Close device setup">×</button></div>
+    <p class="drawer-intro">Connect the Arduino to your Mac with a USB data cable, then select its port.</p>
+    <label class="field-label" for="portSelect">Arduino port</label><div class="port-row"><select id="portSelect"><option value="">No Arduino ports found</option></select><button class="icon-button refresh-ports" id="refreshPortsButton" type="button" aria-label="Refresh available ports">↻</button></div>
+    <div class="connection-actions"><button class="button button-primary" id="connectButton" type="button" disabled>Connect device</button><button class="button button-outline" id="disconnectButton" type="button" disabled>Disconnect</button></div>
+    <p class="setup-feedback" id="setupFeedback" aria-live="polite">Looking for available ports…</p>
+    <div class="device-facts"><div><span>Device</span><strong id="deviceName">Not connected</strong></div><div><span>Firmware</span><strong id="firmwareValue">—</strong></div><div><span>Counting mode</span><strong id="modeValue">—</strong></div><div><span>Last response</span><strong id="lastResponse">—</strong></div></div>
+    <div class="setup-help"><h3>Not seeing your Arduino?</h3><p>Check that the cable carries data. Close Arduino IDE’s Serial Monitor before connecting here, so only one application uses the port.</p></div>
+  </dialog>
+</body>
+</html>
