@@ -10,10 +10,17 @@ const ui = Object.fromEntries([
   'refreshHistoryButton','exportLink',
   'historyBody','historyEmpty','historyNote','portSelect','refreshPortsButton','connectButton',
   'disconnectButton','setupFeedback','deviceName','firmwareValue','modeValue','lastResponse',
-  'trainingTitle','profileSelect','newProfileButton','profileForm','profileName','profileFeedback',
-  'trainingMode','targetField','targetLabel','trainingTarget','goalProgress','modeHint','recordProfile',
+  'trainingTitle','accountEmail','logoutButton','dateFrom','dateTo','clearDates','recordRange',
+  'trainingMode','targetField','targetLabel','trainingTarget','goalProgress','modeHint',
   'trendProtocol','trendTable','trendBody','trendSummary','trendNote','goalsHeader'
 ].map((id) => [id, $(id)]));
+
+let leavingDashboard = false;
+function showLogin() {
+  if (leavingDashboard) return;
+  leavingDashboard = true;
+  location.replace('/login.html');
+}
 
 let state = null;
 let apiAvailable = false;
@@ -122,7 +129,7 @@ function render() {
 
   renderTraining(running);
   const validTarget = ui.trainingMode.value === 'free' || ui.trainingTarget.validity.valid;
-  ui.startButton.disabled = !fresh || pending || running || !supportsPassage || !ui.profileSelect.value || !validTarget;
+  ui.startButton.disabled = !fresh || pending || running || !supportsPassage || !state?.account || !validTarget;
   ui.stopButton.disabled = !fresh || pending || !running;
   ui.refreshHistoryButton.disabled = !fresh || pending || running;
   ui.refreshPortsButton.disabled = mutationInFlight;
@@ -132,14 +139,18 @@ function render() {
   ui.startButton.setAttribute('aria-busy', String(awaitingCommand?.command === 'START'));
   ui.stopButton.setAttribute('aria-busy', String(awaitingCommand?.command === 'STOP'));
   const msg = currentMessage(feedback);
-  if (state?.storage_error) applyMessage(ui.actionFeedback, state.storage_error, 'error');
+  if (state?.device_busy) {
+    for (const control of [ui.startButton, ui.stopButton, ui.connectButton, ui.disconnectButton, ui.refreshHistoryButton]) control.disabled = true;
+    ui.stateTitle.textContent = 'Device in use';
+    applyMessage(ui.actionFeedback, 'Your training history is available while the device is in use.');
+  }
+  else if (state?.storage_error) applyMessage(ui.actionFeedback, state.storage_error, 'error');
   else if (pending) applyMessage(ui.actionFeedback, awaitingCommand?.command === 'STOP' ? 'Waiting for the Arduino to stop and confirm the save…' : awaitingCommand?.command === 'START' ? 'Waiting for the Arduino to start…' : 'Waiting for the device response…');
   else if (msg) applyMessage(ui.actionFeedback,msg.text,msg.kind);
   else if (!apiAvailable) applyMessage(ui.actionFeedback,'The local server is unavailable. Live controls are paused.','error');
   else if (!connected) applyMessage(ui.actionFeedback,'Connect your Arduino to begin.');
   else if (!fresh) applyMessage(ui.actionFeedback,'Waiting for a fresh device reading.');
   else if (!supportsPassage) applyMessage(ui.actionFeedback,'Waiting for passage-mode firmware identification.');
-  else if (!running && !ui.profileSelect.value) applyMessage(ui.actionFeedback,'Choose or add a training profile to start.');
   else if (!running && !validTarget) applyMessage(ui.actionFeedback,'Enter a positive whole-number target.');
   else if (running) applyMessage(ui.actionFeedback,state.active_training?.target ? 'Choose Stop & save to finish early.' : 'Choose Stop & save when your session is finished.');
   else applyMessage(ui.actionFeedback,'Clear the path, then start a session directly from this page.');
@@ -202,11 +213,11 @@ function sourceText(item) {
 }
 const trainingLabels = {free: 'Free practice', count: 'Count goal', timed: 'Timed practice'};
 const targets = {count: '10', timed: '60'};
-let profileSignature = '';
+
 let recordData = {history: [], reports: []};
 let recordRequest = 0;
 let protocolKey = '';
-let pendingProfile = '';
+
 
 function protocolText(item) {
   if (!item.training_mode) return 'Not recorded';
@@ -215,42 +226,18 @@ function protocolText(item) {
   return label + ' · ' + item.target + (item.training_mode === 'count' ? ' passages' : ' seconds');
 }
 
-function renderProfiles() {
-  const profiles = state?.profiles || [];
-  const signature = JSON.stringify(profiles);
-  if (profileSignature !== signature) {
-    profileSignature = signature;
-    const selected = ui.profileSelect.value;
-    const filter = ui.recordProfile.value;
-    ui.profileSelect.replaceChildren(new Option('Choose a profile', ''));
-    ui.recordProfile.replaceChildren(new Option('All profiles', 'all'), new Option('Unassigned sessions', 'unassigned'));
-    for (const profile of profiles) {
-      ui.profileSelect.add(new Option(profile.name, profile.id));
-      ui.recordProfile.add(new Option(profile.name, profile.id));
-    }
-    ui.profileSelect.value = selected;
-    ui.recordProfile.value = filter;
-  }
-  if (pendingProfile && profiles.some(profile => String(profile.id) === pendingProfile)) {
-    ui.profileSelect.value = pendingProfile;
-    pendingProfile = '';
-  }
-}
-
 function renderTraining(running) {
-  renderProfiles();
+  ui.accountEmail.textContent = state?.account?.email || '';
   const plan = state?.active_training;
   if (plan) {
-    ui.profileSelect.value = String(plan.user_id);
     ui.trainingMode.value = plan.training_mode;
     if (plan.target != null) ui.trainingTarget.value = plan.target;
   }
   const locked = running || Boolean(plan) || busy();
   ui.trainingTitle.textContent = plan ? 'Active session' : 'Next session';
-  for (const control of [ui.profileSelect, ui.trainingMode, ui.trainingTarget, ui.newProfileButton]) {
+  for (const control of [ui.trainingMode, ui.trainingTarget]) {
     control.disabled = locked || !apiAvailable;
   }
-  if (locked) closeProfileForm();
   const mode = ui.trainingMode.value;
   const timed = mode === 'timed';
   ui.targetField.hidden = mode === 'free';
@@ -269,11 +256,6 @@ function renderTraining(running) {
   }
 }
 
-function closeProfileForm() {
-  ui.profileForm.hidden = true;
-  ui.newProfileButton.setAttribute('aria-expanded', 'false');
-}
-
 function cell(tr, value, className) {
   const td = tr.insertCell();
   if (className) td.className = className;
@@ -288,21 +270,22 @@ function renderTrend() {
   ui.trendTable.hidden = ui.trendNote.hidden = !report;
   ui.trendBody.replaceChildren();
   if (!report) {
-    ui.trendSummary.textContent = ui.recordProfile.value === 'all' || ui.recordProfile.value === 'unassigned'
-      ? 'Choose a training profile to compare its training days.'
-      : 'Complete a session with this profile to begin a daily trend.';
+    ui.trendSummary.textContent = ui.dateFrom.value || ui.dateTo.value
+      ? 'No training sessions in this date range.'
+      : 'Your first saved training session will appear here.';
     return;
   }
   const latest = report.days[report.days.length - 1];
   if (report.delta === null) {
     ui.trendSummary.textContent = latest.pace === null
       ? 'Pace is unavailable for the latest day because its recorded duration is zero.'
-      : 'First measured day: ' + latest.pace.toFixed(1) + ' passages/min. A second training day enables comparison.';
+      : latest.day + ' averaged ' + latest.pace.toFixed(1) + ' passages/min. A second training day enables comparison.';
   } else {
     const delta = report.delta;
     const change = (delta > 0 ? '+' : '') + delta.toFixed(1);
-    ui.trendSummary.textContent = latest.day + ' averaged ' + latest.pace.toFixed(1) +
-      ' passages/min (' + change + ' vs. ' + report.baseline_day + ').';
+    const baseline = report.days.find(day => day.day === report.baseline_day);
+    ui.trendSummary.textContent = baseline.day + ' · ' + baseline.pace.toFixed(1) + ' passages/min → ' +
+      latest.day + ' · ' + latest.pace.toFixed(1) + ' passages/min (' + change + ' passages/min).';
   }
   const hasGoal = report.target !== null;
   ui.goalsHeader.hidden = !hasGoal;
@@ -327,8 +310,10 @@ function renderTrend() {
 
 function displayRecords() {
   const rows = recordData.history;
-  const names = new Map((state?.profiles || []).map(p => [p.id, p.name]));
-  ui.exportLink.href = '/api/export.csv?user=' + encodeURIComponent(ui.recordProfile.value);
+  ui.exportLink.href = '/api/export.csv?' + recordQuery();
+  const from = ui.dateFrom.value;
+  const to = ui.dateTo.value;
+  ui.recordRange.textContent = [from && 'From ' + from, to && 'Through ' + to].filter(Boolean).join(' · ') || 'All training dates';
   ui.exportLink.setAttribute('aria-disabled', String(!rows.length || !apiAvailable));
   ui.exportLink.tabIndex = rows.length && apiAvailable ? 0 : -1;
   ui.historyBody.replaceChildren();
@@ -336,7 +321,7 @@ function displayRecords() {
   for (const row of rows) {
     const tr = ui.historyBody.insertRow();
     cell(tr, '#' + String(row.id).padStart(3, '0'), 'session-cell');
-    cell(tr, names.get(row.user_id) || 'Unassigned');
+    cell(tr, row.training_day || 'Not recorded');
     cell(tr, protocolText(row)); cell(tr, row.count, 'count-cell'); cell(tr, secondsText(row.seconds), 'mono');
     const type = cell(tr, modeText(row));
     const source = document.createElement('span');
@@ -348,21 +333,34 @@ function displayRecords() {
   renderTrend();
 }
 
+function recordQuery() {
+  const query = new URLSearchParams({user: state.account.id});
+  if (ui.dateFrom.value) query.set('from', ui.dateFrom.value);
+  if (ui.dateTo.value) query.set('to', ui.dateTo.value);
+  return query;
+}
+
 async function renderHistory() {
-  if (!ui.recordsDialog.open || !apiAvailable) return;
+  if (!state?.account || !apiAvailable) return;
   ui.historyNote.textContent = state.storage_error || 'Daily pace describes observed training performance. Sensor placement and the exercise performed affect comparisons.';
   ui.historyNote.dataset.kind = state.storage_error ? 'error' : 'info';
-  const filter = ui.recordProfile.value;
-  const signature = JSON.stringify([filter, state.archive_revision, profileSignature]);
+  const query = recordQuery().toString();
+  ui.clearDates.hidden = !ui.dateFrom.value && !ui.dateTo.value;
+  const signature = JSON.stringify([state.account.id, query, state.archive_revision]);
   if (signature === historySignature) return;
   historySignature = signature;
   const request = ++recordRequest;
   recordData = {history: [], reports: []};
   displayRecords();
   ui.historyEmpty.hidden = true;
+  if (ui.dateFrom.value && ui.dateTo.value && ui.dateFrom.value > ui.dateTo.value) {
+    ui.trendSummary.textContent = 'Choose an end date on or after the start date.';
+    return;
+  }
   ui.trendSummary.textContent = 'Loading training records…';
   try {
-    const response = await fetch('/api/records?user=' + encodeURIComponent(filter), {cache: 'no-store'});
+    const response = await fetch('/api/records?' + query, {cache: 'no-store'});
+    if (response.status === 401) { showLogin(); return; }
     if (!response.ok) throw new Error('Cannot load training records.');
     const data = await response.json();
     if (request !== recordRequest) return;
@@ -412,9 +410,11 @@ async function requestState() {
     const controller=new AbortController();const timeout=setTimeout(()=>controller.abort(),4000);
     try{
       const response=await fetch('/api/state?live=1',{cache:'no-store',signal:controller.signal});
+      if(response.status===401){showLogin();return;}
       if(!response.ok)throw new Error(`Server returned ${response.status}`);
       const next=await response.json();
       if(!next||typeof next!=='object'||!next.connection)throw new Error('Invalid server response');
+      if (state?.account && state.account.id !== next.account.id) { location.reload(); return; }
       const previousPlan = state?.active_training;
       if (previousPlan && !next.active_training && !awaitingCommand) {
         const result = [...next.events].reverse().find(event =>
@@ -434,7 +434,7 @@ async function requestState() {
 async function post(path,body={}) {
   const controller=new AbortController();const timeout=setTimeout(()=>controller.abort(),10000);
   try{
-    const response=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:controller.signal});
+    const response=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json','X-Account-Id':String(state?.account?.id ?? '')},body:JSON.stringify(body),signal:controller.signal});
     const result=await response.json().catch(()=>({ok:false,message:'The server returned an unreadable response.'}));
     if(!response.ok||result.ok===false)throw new Error(result.message||`Request failed (${response.status})`);
     return result;
@@ -445,7 +445,7 @@ async function sendCommand(command) {
   mutationInFlight=true;awaitingCommand={command,started:Date.now(),received:number(state?.connection?.last_received_at)??0,sessionId:state?.device?.session_id??null};render();
   const body = {command};
   if (command === 'START') {
-    body.training = {user_id: Number(ui.profileSelect.value), training_mode: ui.trainingMode.value,
+    body.training = {training_mode: ui.trainingMode.value,
       target: ui.trainingMode.value === 'free' ? null : ui.trainingTarget.valueAsNumber};
   }
   try{await post('/api/command',body);}
@@ -456,35 +456,27 @@ ui.trainingMode.addEventListener('change', () => {
   if (ui.trainingMode.value !== 'free') ui.trainingTarget.value = targets[ui.trainingMode.value];
   render();
 });
-ui.profileSelect.addEventListener('change', render);
 ui.trainingTarget.addEventListener('input', () => {
   targets[ui.trainingMode.value] = ui.trainingTarget.value;
   render();
 });
-ui.newProfileButton.addEventListener('click', () => {
-  ui.profileForm.hidden = !ui.profileForm.hidden;
-  ui.newProfileButton.setAttribute('aria-expanded', String(!ui.profileForm.hidden));
-  if (!ui.profileForm.hidden) ui.profileName.focus();
-});
-ui.profileForm.addEventListener('submit', async event => {
-  event.preventDefault();
-  const button = ui.profileForm.querySelector('button');
-  button.disabled = true;
-  ui.profileFeedback.textContent = '';
+ui.logoutButton.addEventListener('click', async () => {
+  ui.logoutButton.disabled = true;
   try {
-    const {profile} = await post('/api/profiles', {name: ui.profileName.value});
-    pendingProfile = String(profile.id);
-    ui.profileName.value = '';
-    closeProfileForm();
-    await requestState();
-    render();
+    await post('/api/logout');
+    showLogin();
   } catch (error) {
-    ui.profileFeedback.textContent = error.message;
-  } finally {
-    button.disabled = false;
+    flashMessage(error.message, 'error');
+    render();
+    ui.logoutButton.disabled = false;
   }
 });
-ui.recordProfile.addEventListener('change', () => { protocolKey = ''; renderHistory(); });
+for (const input of [ui.dateFrom, ui.dateTo]) input.addEventListener('change', renderHistory);
+ui.clearDates.addEventListener('click', () => {
+  ui.dateFrom.value = ui.dateTo.value = '';
+  renderHistory();
+});
+window.addEventListener('pageshow', event => { if (event.persisted) location.reload(); });
 ui.trendProtocol.addEventListener('change', () => { protocolKey = ui.trendProtocol.value; renderTrend(); });
 
 ui.startButton.addEventListener('click',()=>sendCommand('START'));
@@ -494,8 +486,6 @@ ui.exportLink.addEventListener('click',(event)=>{if(ui.exportLink.getAttribute('
 ui.setupButton.addEventListener('click',()=>{ui.setupDialog.showModal();requestState();});
 ui.closeSetupButton.addEventListener('click',()=>ui.setupDialog.close());
 ui.recordsButton.addEventListener('click',()=>{
-  ui.recordProfile.value = ui.profileSelect.value || 'all';
-  protocolKey = '';
   historySignature = '';
   ui.recordsDialog.showModal();
   renderHistory();
@@ -536,5 +526,5 @@ ui.presentationButton.addEventListener('click',()=>{
   if(currentPresentation&&document.documentElement.requestFullscreen){document.documentElement.requestFullscreen().catch(()=>{});}
   else if(!currentPresentation&&document.fullscreenElement&&document.exitFullscreen){document.exitFullscreen().catch(()=>{});}
 });
-async function poll(){await requestState();setTimeout(poll,450);}
+async function poll(){await requestState();if (!leavingDashboard) setTimeout(poll,450);}
 poll();

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 import csv
-from datetime import datetime
+from datetime import date, datetime
 import io
 import json
 import math
@@ -18,13 +18,16 @@ import sqlite3
 import threading
 import time
 from collections import deque
+from http.cookies import CookieError, SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, unquote, urlsplit
 import webbrowser
 
 if __package__:
+    from .accounts import Accounts, InvalidLogin, SESSION_AGE
     from .training import SESSION_COLUMNS, TrainingStore, daily_reports, training_plan
 else:  # Direct launch via start-demo.command.
+    from accounts import Accounts, InvalidLogin, SESSION_AGE
     from training import SESSION_COLUMNS, TrainingStore, daily_reports, training_plan
 
 try:
@@ -109,7 +112,8 @@ class Bridge:
                                last_received_at=None)
         self.device_id = None
         self.store = TrainingStore(self.history_path.with_suffix(".sqlite3"))
-        self.profiles = self.store.profiles()
+        self.accounts = Accounts(self.store.db, self.lock)
+        self.live_owner = None
         self.history = {}
         self.dirty = {}
         self.archive_revision = 0
@@ -135,7 +139,8 @@ class Bridge:
             self.history[record["device_id"], record["id"]] = record
 
     def _event(self, text, kind="info"):
-        self.events.append(dict(at=self.clock(), text=str(text)[:1000], kind=kind))
+        owner = self.pending.get("actor", self.live_owner) if self.pending else self.live_owner
+        self.events.append(dict(at=self.clock(), text=str(text)[:1000], kind=kind, owner=owner))
 
     def _set_error(self, message):
         if message != self.connection["error"]:
@@ -191,9 +196,7 @@ class Bridge:
 
     def add_profile(self, name):
         with self.lock:
-            profile = self.store.profile(name)
-            self.profiles = self.store.profiles()
-            return profile
+            return self.store.profile(name)
 
     def _merge_record(self, record_id, count, seconds, acknowledged=False):
         if not self.device_id or not record_id:
@@ -216,18 +219,26 @@ class Bridge:
             self.history[key] = self.dirty[key] = row
             self.archive_revision += 1
 
-    def _rows(self, user_filter):
+    def _rows(self, user_filter, start=None, end=None):
         rows = self.history.values()
         if user_filter != "all":
             rows = (row for row in rows if row["user_id"] == user_filter)
+        if start:
+            rows = (row for row in rows if row["training_day"] and row["training_day"] >= start)
+        if end:
+            rows = (row for row in rows if row["training_day"] and row["training_day"] <= end)
         return sorted(rows, key=lambda row: (row["saved_at"] or 0, row["device_id"], row["id"]), reverse=True)
 
-    def records(self, user_filter="all"):
+    def records(self, user_filter="all", start=None, end=None):
         with self.lock:
-            rows = self._rows(user_filter)
+            rows = self._rows(user_filter, start, end)
             return dict(history=rows, reports=daily_reports(rows) if type(user_filter) is int else [])
 
-    def snapshot(self, include_history=True):
+    def held_by_other(self, user_id):
+        plan = self.active_training or (self.pending or {}).get("training")
+        return bool(plan and plan["user_id"] != user_id)
+
+    def snapshot(self, include_history=True, account=None):
         ports = self.ports()
         with self.lock:
             connection = dict(self.connection)
@@ -235,22 +246,35 @@ class Bridge:
             connection["stale"] = (not connection["connected"] or last is None or
                                    self.clock() - last > STALE_SECONDS)
             result = dict(connection=connection, device=dict(self.device),
-                          events=list(self.events), ports=ports, profiles=list(self.profiles),
+                          events=list(self.events), ports=ports,
                           active_training=dict(self.active_training) if self.active_training else None,
                           archive_revision=self.archive_revision,
                           pending_command=self.pending["command"] if self.pending else None,
                           storage_error=self.storage_error or self.import_error)
             if include_history:
-                result.update(history=self._rows("all"), samples=list(self.samples))
+                result.update(history=self._rows(account["id"] if account else "all"), samples=list(self.samples))
+            if account is None:  # Internal bridge diagnostics.
+                result["profiles"] = self.store.profiles()
+                return result
+            user_id = account["id"]
+            result.update(account=account, device_busy=self.held_by_other(user_id))
+            result["events"] = [e for e in self.events if e["owner"] == user_id]
+            if self.live_owner != user_id:
+                result["active_training"] = None
+                result["device"].update(count=None, seconds=None, session_id=None, phase=None)
+                if result["device_busy"] or self.device["state"] == "RUNNING":
+                    result["device"].update(sensor=None, distance_cm=None)
+                if include_history:
+                    result["samples"] = []
             return result
 
-    def export_csv(self, user_filter="all"):
+    def export_csv(self, user_filter="all", start=None, end=None):
         output = io.StringIO(newline="")
         fields = ["device_id", "id", "count", "seconds", "saved_at", "source", "mode"]
         fields += ["user_id", "profile", "training_mode", "target", "started_at", "training_day"]
         with self.lock:
-            names = {p["id"]: p["name"] for p in self.profiles}
-            rows = self._rows(user_filter)
+            names = {p["id"]: p["name"] for p in self.store.profiles()}
+            rows = self._rows(user_filter, start, end)
         writer = csv.DictWriter(output, fieldnames=fields)
         writer.writeheader()
         for record in rows:
@@ -310,7 +334,7 @@ class Bridge:
                     return False, "Identify the passage-counting firmware first."
                 try:
                     training = training_plan(training.get("user_id"), training.get("training_mode"),
-                                             training.get("target"), self.profiles)
+                                             training.get("target"), self.store.profiles())
                 except ValueError as error:
                     return False, str(error)
             if command == "STOP":
@@ -379,6 +403,8 @@ class Bridge:
                     plan = (self.pending.get("training") if self.pending and self.pending["sent"]
                             and self.pending["command"] == "START" else None)
                     started_at = self.clock()
+                    self.live_owner = plan["user_id"] if plan else None
+                    self.samples.clear()
                     if plan:
                         self.active_training = dict(plan, id=record_id, started_at=started_at,
                                                     training_day=datetime.fromtimestamp(started_at).date().isoformat(),
@@ -445,6 +471,7 @@ class Bridge:
                 self._event("No confirmation for %s: connection ended." % self.pending["command"], "error")
             self.pending = None
             self.active_training = None
+            self.live_owner = None
             self.auto_queue.clear()
             self.rx.clear()
             self.log_rows = None
@@ -642,6 +669,39 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError:
             return None
 
+    def _token(self):
+        try:
+            cookies = SimpleCookie(self.headers.get("Cookie", ""))
+            item = cookies.get("steps_session")
+            if item and re.fullmatch(r"[A-Za-z0-9_-]{43}", item.value):
+                return item.value
+        except CookieError:
+            pass
+        return None
+
+    def _account(self):
+        account = self.server.bridge.accounts.current(self._token())
+        if not account:
+            self._send(401, dict(ok=False, message="Sign in to continue."))
+        return account
+
+    @staticmethod
+    def _cookie(token, age):
+        return {"Set-Cookie": f"steps_session={token}; Path=/; HttpOnly; SameSite=Strict; Max-Age={age}"}
+
+    def _date_range(self, query):
+        bounds = []
+        for key in ("from", "to"):
+            value = query.get(key, [""])[0]
+            if value:
+                if not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", value):
+                    raise ValueError
+                date.fromisoformat(value)
+            bounds.append(value or None)
+        if all(bounds) and bounds[0] > bounds[1]:
+            raise ValueError
+        return bounds
+
     def do_GET(self):
         if not self._host():
             self._send(403, dict(ok=False, message="Only a local Host header is allowed."))
@@ -649,29 +709,36 @@ class Handler(BaseHTTPRequestHandler):
         url = urlsplit(self.path)
         path = url.path
         query = parse_qs(url.query)
-        user_filter = "all"
-        if path in {"/api/records", "/api/export.csv"}:
-            value = query.get("user", ["all"])[0]
-            if value == "unassigned":
-                user_filter = None
-            elif value != "all":
-                user_filter = uint32(value)
-                if not user_filter:
-                    self._send(400, dict(ok=False, message="Invalid profile filter."))
-                    return
+        bridge = self.server.bridge
         if path == "/api/health":
-            self._send(200, dict(ok=True, application="ece198-motion-counter", version="1.0.0"))
-        elif path == "/api/state":
-            self._send(200, self.server.bridge.snapshot(include_history=query.get("live") != ["1"]))
-        elif path == "/api/records":
-            self._send(200, self.server.bridge.records(user_filter))
-        elif path == "/api/ports":
-            self._send(200, dict(ports=self.server.bridge.ports()))
-        elif path == "/api/export.csv":
-            self._send(200, self.server.bridge.export_csv(user_filter).encode("utf-8-sig"), "text/csv; charset=utf-8",
-                       {"Content-Disposition": 'attachment; filename="exercise-sessions.csv"'})
-        elif path.startswith("/api/"):
-            self._send(404, dict(ok=False, message="Unknown API route."))
+            self._send(200, dict(ok=True, application="ece198-motion-counter", version="2.0.0"))
+            return
+        if path.startswith("/api/"):
+            account = self._account()
+            if not account:
+                return
+            if path in {"/api/records", "/api/export.csv"}:
+                if query.get("user", [str(account["id"])]) != [str(account["id"])]:
+                    self._send(403, dict(ok=False, message="Only your training records are available."))
+                    return
+                try:
+                    start, end = self._date_range(query)
+                except ValueError:
+                    self._send(400, dict(ok=False, message="Choose a valid training date range."))
+                    return
+                if path == "/api/records":
+                    self._send(200, bridge.records(account["id"], start, end))
+                else:
+                    self._send(200, bridge.export_csv(account["id"], start, end).encode("utf-8-sig"),
+                               "text/csv; charset=utf-8", {"Content-Disposition": 'attachment; filename="my-training.csv"'})
+            elif path == "/api/state":
+                self._send(200, bridge.snapshot(include_history=query.get("live") != ["1"], account=account))
+            elif path == "/api/ports":
+                self._send(200, dict(ports=bridge.ports()))
+            else:
+                self._send(404, dict(ok=False, message="Unknown API route."))
+        elif path in {"/", "/index.html"} and not bridge.accounts.current(self._token()):
+            self._send(303, b"", extra={"Location": "/login.html"})
         else:
             try:
                 relative = unquote(path).lstrip("/") or "index.html"
@@ -706,24 +773,55 @@ class Handler(BaseHTTPRequestHandler):
             self._send(400, dict(ok=False, message="Invalid JSON object."))
             return
         path = urlsplit(self.path).path
-        if path == "/api/profiles":
+        bridge = self.server.bridge
+        if path in {"/api/register", "/api/login"}:
+            method = bridge.accounts.register if path == "/api/register" else bridge.accounts.login
             try:
-                profile = self.server.bridge.add_profile(data.get("name"))
-                self._send(200, dict(ok=True, profile=profile))
+                token, account = method(data.get("email"), data.get("password"))
+            except InvalidLogin as error:
+                self._send(401, dict(ok=False, message=str(error)))
             except ValueError as error:
                 self._send(400, dict(ok=False, message=str(error)))
-            except sqlite3.Error as error:
-                self._send(503, dict(ok=False, message="Cannot save profile: %s" % error))
+            except sqlite3.Error:
+                self._send(503, dict(ok=False, message="Account storage is unavailable."))
+            else:
+                self._send(200, dict(ok=True, account=account), extra=self._cookie(token, SESSION_AGE))
             return
-        if path == "/api/connect":
-            ok, message = self.server.bridge.connect(data.get("port"))
-        elif path == "/api/disconnect":
-            ok, message = self.server.bridge.disconnect()
-        elif path == "/api/command":
-            ok, message = self.server.bridge.command(data.get("command"), data.get("training"))
-        else:
-            self._send(404, dict(ok=False, message="Unknown API route."))
+        account = self._account()
+        if not account:
             return
+        actor = account["id"]
+        expected = self.headers.get("X-Account-Id")
+        if expected is not None and expected != str(actor):
+            self._send(409, dict(ok=False, message="The signed-in account changed. Refresh this page."))
+            return
+        if path == "/api/logout":
+            bridge.accounts.logout(self._token())
+            self._send(200, dict(ok=True), extra=self._cookie("", 0))
+            return
+        with bridge.lock:
+            if bridge.held_by_other(actor):
+                self._send(409, dict(ok=False, message="The device is in use by another account."))
+                return
+            if path == "/api/connect":
+                ok, message = bridge.connect(data.get("port"))
+            elif path == "/api/disconnect":
+                ok, message = bridge.disconnect()
+            elif path == "/api/command":
+                command, plan = data.get("command"), data.get("training")
+                if isinstance(command, str) and command.strip().upper() == "START":
+                    if plan is None:
+                        plan = {"training_mode": "free"}
+                    if not isinstance(plan, dict) or ("user_id" in plan and plan["user_id"] != actor):
+                        self._send(400, dict(ok=False, message="Start a session for the signed-in account."))
+                        return
+                    plan = dict(plan, user_id=actor)
+                ok, message = bridge.command(command, plan)
+                if ok:
+                    bridge.pending["actor"] = actor
+            else:
+                self._send(404, dict(ok=False, message="Unknown API route."))
+                return
         self._send(200 if ok else 409, dict(ok=ok, message=message))
 
 

@@ -433,6 +433,8 @@ class HttpTests(unittest.TestCase):
         self.thread.start()
         self.port = self.server.server_address[1]
         self.origin = "http://127.0.0.1:%d" % self.port
+        self.cookie = ""
+        self.user = self.register("alice@example.test")
 
     def tearDown(self):
         self.server.shutdown()
@@ -444,7 +446,10 @@ class HttpTests(unittest.TestCase):
     def request(self, method, path, body=None, headers=None):
         connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=3)
         try:
-            connection.request(method, path, body=body, headers=headers or {})
+            headers = dict(headers or {})
+            if self.cookie:
+                headers.setdefault("Cookie", self.cookie)
+            connection.request(method, path, body=body, headers=headers)
             response = connection.getresponse()
             return response.status, dict(response.getheaders()), response.read()
         finally:
@@ -453,6 +458,13 @@ class HttpTests(unittest.TestCase):
     def post(self, path, payload, origin=None):
         return self.request("POST", path, json.dumps(payload), {
             "Content-Type": "application/json", "Origin": self.origin if origin is None else origin})
+
+    def register(self, email):
+        status, headers, body = self.post("/api/register", {"email": email, "password": "test-password"})
+        self.assertEqual(status, 200)
+        self.cookie = headers["Set-Cookie"].split(";")[0]
+        self.assertIn("HttpOnly", headers["Set-Cookie"])
+        return json.loads(body)["account"]
 
     def test_health_state_static_and_csv(self):
         status, headers, body = self.request("GET", "/api/health")
@@ -476,24 +488,92 @@ class HttpTests(unittest.TestCase):
         self.assertEqual(self.post("/api/connect", {"port": "/etc/passwd"})[0], 409)
         self.assertEqual(self.post("/api/command", {"command": "START\nSTOP"})[0], 409)
 
-    def test_profile_records_live_snapshot_and_filtered_export(self):
-        self.assertEqual(self.post("/api/profiles", {"name": "  "})[0], 400)
-        status, _, body = self.post("/api/profiles", {"name": "=Alice"})
+    def test_login_logout_expiry_and_persistence(self):
+        credentials = {"email": "ALICE@example.test", "password": "test-password"}
+        self.assertEqual(self.post("/api/register", credentials)[0], 400)
+        self.assertEqual(self.post("/api/register", dict(credentials, email="invalid"))[0], 400)
+        self.assertEqual(self.post("/api/register", dict(credentials, password=""))[0], 400)
+        self.assertEqual(self.post("/api/logout", {})[0], 200)
+        for path in ("/api/state", "/api/state?live=1", "/api/records", "/api/export.csv", "/api/ports"):
+            self.assertEqual(self.request("GET", path)[0], 401)
+        self.assertEqual(self.request("GET", "/")[1]["Location"], "/login.html")
+        self.assertEqual(self.post("/api/command", {"command": "START"})[0], 401)
+        self.assertEqual(self.post("/api/login", dict(credentials, password="wrong"))[0], 401)
+        status, headers, body = self.post("/api/login", credentials)
         self.assertEqual(status, 200)
-        user = json.loads(body)["profile"]
-        self.bridge.device_id = "board"
-        self.bridge.feed_line("SAVED id=1 count=2 seconds=15")
-        state = json.loads(self.request("GET", "/api/state?live=1")[2])
-        self.assertEqual(state["profiles"], [user])
-        self.assertNotIn("history", state)
-        self.assertNotIn("samples", state)
-        self.assertEqual(self.request("GET", "/api/records?user=invalid")[0], 400)
-        archive = json.loads(self.request("GET", "/api/records?user=%d" % user["id"])[2])
-        self.assertEqual(archive, {"history": [], "reports": []})
-        self.assertEqual(len(json.loads(self.request("GET", "/api/records?user=unassigned")[2])["history"]), 1)
-        parse = lambda body: list(csv.DictReader(io.StringIO(body.decode("utf-8-sig"))))
-        self.assertEqual(parse(self.request("GET", "/api/export.csv?user=%d" % user["id"])[2]), [])
-        self.assertEqual(parse(self.request("GET", "/api/export.csv?user=unassigned")[2])[0]["id"], "1")
+        self.assertEqual(json.loads(body)["account"], self.user)
+        self.cookie = headers["Set-Cookie"].split(";")[0]
+        token = self.cookie.split("=")[1]
+        reopened = Bridge(self.bridge.history_path, lambda: [], auto_connect=False)
+        try:
+            self.assertEqual(reopened.accounts.current(token), self.user)
+            with reopened.store.db:
+                reopened.store.db.execute("UPDATE logins SET expires_at=0")
+        finally:
+            reopened.close()
+        self.assertEqual(self.request("GET", "/api/records")[0], 401)
+
+    def test_account_ownership_and_dated_reports(self):
+        alice_cookie = self.cookie
+        bob = self.register("bob@example.test")
+        bob_cookie = self.cookie
+        self.cookie = alice_cookie
+        self.bridge.auto_connect = True
+        self.bridge._attempt_connect()
+        self.bridge.feed_line(BANNER)
+        self.bridge.feed_line(IDLE)
+        cases = [(alice_cookie, self.user, 1, 5), (alice_cookie, self.user, 3, 8), (bob_cookie, bob, 3, 11)]
+        for session_id, (cookie, account, day, count) in enumerate(cases, 1):
+            self.cookie = cookie
+            now = datetime(2026, 6, day, 12).timestamp()
+            self.bridge.clock = lambda: now
+            self.bridge.feed_line(IDLE)
+            if session_id == 1:
+                self.assertEqual(self.post("/api/command", {"command": "START", "training":
+                                 {"user_id": bob["id"], "training_mode": "free"}})[0], 400)
+            self.assertEqual(self.post("/api/command", {"command": "START"})[0], 200)
+            self.bridge._pump_command()
+            self.bridge.feed_line("STARTED id=%d" % session_id)
+            self.bridge.feed_line("STATE=RUNNING COUNT=4 SEC=10")
+            self.assertEqual(self.bridge.active_training["user_id"], account["id"])
+            if session_id == 1:
+                self.cookie = bob_cookie
+                state = json.loads(self.request("GET", "/api/state")[2])
+                self.assertTrue(state["device_busy"])
+                self.assertIsNone(state["active_training"])
+                self.assertIsNone(state["device"]["count"])
+                self.assertEqual(state["samples"], [])
+                self.assertEqual(state["events"], [])
+                self.assertEqual(self.post("/api/command", {"command": "STOP"})[0], 409)
+                self.assertEqual(self.post("/api/disconnect", {})[0], 409)
+                self.cookie = cookie
+            self.bridge.feed_line("SAVED id=%d count=%d seconds=60" % (session_id, count))
+        self.cookie = alice_cookie
+        result = json.loads(self.request("GET", "/api/records")[2])
+        self.assertEqual([row["training_day"] for row in result["history"]], ["2026-06-03", "2026-06-01"])
+        self.assertEqual(result["reports"][0]["delta"], 3)
+        state = json.loads(self.request("GET", "/api/state")[2])
+        self.assertEqual(len(state["history"]), 2)
+        self.assertNotIn("profiles", state)
+        self.assertIsNone(state["device"]["seconds"])
+        self.assertEqual(self.request("GET", "/api/records?user=all")[0], 403)
+        self.assertEqual(self.request("GET", "/api/export.csv?user=%d" % bob["id"])[0], 403)
+        self.assertEqual(self.request("GET", "/api/records?from=2026-02-29")[0], 400)
+        self.assertEqual(self.request("GET", "/api/records?from=2026-06-03&to=2026-06-01")[0], 400)
+        interval = "?from=2026-06-03&to=2026-06-03"
+        one_day = json.loads(self.request("GET", "/api/records" + interval)[2])
+        self.assertEqual([row["count"] for row in one_day["history"]], [8])
+        self.assertIsNone(one_day["reports"][0]["delta"])
+        exported = self.request("GET", "/api/export.csv" + interval)[2]
+        row, = csv.DictReader(io.StringIO(exported.decode("utf-8-sig")))
+        self.assertEqual((row["profile"], row["training_day"], row["count"]), ("alice@example.test", "2026-06-03", "8"))
+        self.assertEqual(json.loads(self.request("GET", "/api/records?to=2025-01-01")[2])["history"], [])
+
+    def test_old_nickname_is_not_claimed_by_email_registration(self):
+        old = self.bridge.add_profile("legacy@example.test")
+        account = self.register("legacy@example.test")
+        self.assertNotEqual(account["id"], old["id"])
+        self.assertEqual(self.post("/api/profiles", {"name": "alias"})[0], 404)
 
     def test_connect_is_pending_not_fake_device_success(self):
         status, _, body = self.post("/api/connect", {"port": "/dev/cu.test"})

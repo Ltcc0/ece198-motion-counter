@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#f4f3ec">
+  <title>Sign in — STEPS</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/login.js" defer></script>
+</head>
+<body class="login-page">
+  <main class="login-card">
+    <div class="brand"><span class="brand-symbol" aria-hidden="true"><i></i><i></i><i></i></span>STEPS <span class="brand-sub">Movement Counter</span></div>
+    <h1 id="loginTitle">Sign in</h1>
+    <p id="loginIntro">View your training history and daily progress.</p>
+    <form id="loginForm">
+      <label for="email">Email</label>
+      <input id="email" type="email" name="email" autocomplete="username" required maxlength="254">
+      <label for="password">Password</label>
+      <input id="password" type="password" name="password" autocomplete="current-password" required maxlength="256">
+      <p id="loginError" role="alert" hidden></p>
+      <button id="submitLogin" class="button button-primary">Sign in</button>
+    </form>
+    <div class="login-switch"><span id="switchLabel">New to STEPS?</span> <button type="button" class="text-button" id="switchMode">Create account</button></div>
+  </main>
+</body>
+</html>
