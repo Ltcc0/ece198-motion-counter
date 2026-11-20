@@ -17,6 +17,7 @@
         <span>STEPS <span class="brand-divider">/</span> <span class="brand-sub">Movement Counter</span></span>
       </a>
       <div class="header-actions">
+        <a class="text-button" href="#progress">My progress</a>
         <button class="text-button records-button" id="recordsButton" type="button" aria-haspopup="dialog">Session records</button>
         <span class="connection-pill" id="connectionPill"><span class="status-dot"></span><span id="connectionLabel">Disconnected</span></span>
         <button class="text-button setup-button" id="setupButton" type="button" aria-haspopup="dialog">Device setup <span aria-hidden="true">↗</span></button>
@@ -41,16 +42,47 @@
           <p class="action-feedback" id="actionFeedback" aria-live="polite">Connect your Arduino to begin.</p>
         </div>
 
+        <aside class="training-panel" aria-labelledby="trainingTitle">
+          <h2 id="trainingTitle">Next session</h2>
+          <div class="account-line"><span id="accountEmail"></span><button class="text-button" type="button" id="logoutButton">Sign out</button></div>
+          <label for="trainingMode">Training mode</label>
+          <select id="trainingMode">
+            <option value="free">Free practice</option>
+            <option value="count">Count goal</option>
+            <option value="timed">Timed practice</option>
+          </select>
+          <div id="targetField" hidden><label id="targetLabel" for="trainingTarget">Target passages</label>
+            <input type="number" id="trainingTarget" min="1" max="4294967295" step="1" value="10" required></div>
+          <p class="mode-hint" id="modeHint">Choose Stop &amp; save whenever you finish.</p>
+          <progress id="goalProgress" aria-label="Training goal progress" hidden></progress>
+        </aside>
+
       </section>
 
 
+        <section class="trend-panel" id="progress" aria-labelledby="trendTitle">
+          <div class="trend-heading"><h2 id="trendTitle">My daily progress</h2><select id="trendProtocol" aria-label="Training mode and target for comparison" hidden></select></div>
+          <div class="date-controls">
+            <label>From <input type="date" id="dateFrom"></label>
+            <label>To <input type="date" id="dateTo"></label>
+            <button class="text-button" type="button" id="clearDates" hidden>Clear dates</button>
+          </div>
+          <p id="trendSummary" role="status">Loading your training days…</p>
+          <div class="trend-scroll" id="trendTable" hidden><table>
+            <thead><tr><th>Training day</th><th>Sessions</th><th>Passages</th><th>Duration</th><th id="goalsHeader">Goals met</th><th>Passages/min</th></tr></thead>
+            <tbody id="trendBody"></tbody>
+          </table></div>
+          <p id="trendNote" class="history-note" hidden>Pace uses total passages divided by total minutes across sessions with a recorded duration above zero. Training days follow the Mac’s local date at session start.</p>
+        </section>
     </main>
     <footer><span>STEPS <span aria-hidden="true">/</span> ECE198</span><span>Classroom prototype for participation logging.</span></footer>
   </div>
 
   <dialog id="recordsDialog" class="records-dialog" aria-labelledby="historyTitle">
         <div class="section-heading"><div><p class="eyebrow">SESSION RECORDS</p><h2 id="historyTitle">Session records</h2></div><div class="history-actions"><button class="text-button" id="refreshHistoryButton" type="button" disabled><span aria-hidden="true">↻</span> Refresh</button><a class="text-button export-link" id="exportLink" href="/api/export.csv" download aria-disabled="true"><span aria-hidden="true">↓</span> Export CSV</a><button class="icon-button" id="closeRecordsButton" type="button" aria-label="Close session records">×</button></div></div>
-        <div class="history-table-wrap"><table><thead><tr><th scope="col">Session</th><th scope="col">Count</th><th scope="col">Duration</th><th scope="col">Record type</th><th scope="col">Saved</th></tr></thead><tbody id="historyBody"></tbody></table><div class="history-empty" id="historyEmpty"><span class="empty-mark" aria-hidden="true">↗</span><h3>Your sessions will appear here.</h3><p>Start a session, make a few passes, then choose Stop &amp; save.</p></div></div>
+        <p class="history-note" id="recordRange"></p>
+        <h3 class="records-subheading">Saved sessions</h3>
+        <div class="history-table-wrap"><table><thead><tr><th scope="col">Session</th><th scope="col">Training date</th><th scope="col">Training</th><th scope="col">Count</th><th scope="col">Duration</th><th scope="col">Record type</th><th scope="col">Saved</th></tr></thead><tbody id="historyBody"></tbody></table><div class="history-empty" id="historyEmpty"><h3>No saved sessions.</h3><p>Saved sessions appear here for the selected dates.</p></div></div>
         <p class="history-note" id="historyNote">Records describe participation. A movement count is not a measure of movement quality or clinical progress.</p>
   </dialog>
 

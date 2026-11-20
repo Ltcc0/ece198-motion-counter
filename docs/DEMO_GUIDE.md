@@ -4,7 +4,7 @@ This guide describes the FW3 **Passage mode** prototype. One detected passage co
 
 ## Everyday launch after the first firmware upload
 
-Connect the wired Arduino to the Mac by USB, run `./start-demo.command`, wait for the dashboard to connect, and click **Start session**. The button sends `START` to the board automatically. **Stop & save** sends `STOP` automatically. No Arduino IDE window or manually typed serial command is needed during the demonstration.
+Connect the wired Arduino to the Mac by USB, run `./start-demo.command`, wait for the dashboard to connect, sign in or create a local account with an email and password, select **Free practice**, and click **Start session**. The button sends `START` to the board automatically. **Stop & save** sends `STOP` automatically. No Arduino IDE window or manually typed serial command is needed during the demonstration.
 
 The firmware starts running when the board receives power. The dashboard starts and stops a counting session; its buttons do not upload firmware.
 
@@ -18,6 +18,8 @@ The firmware starts running when the board receives power. The dashboard starts 
 6. Clear the detection area. Use slow, deliberate passages for the first check.
 
 The dashboard and USB bridge run together on the Mac. The embedded program already runs on the Arduino after upload; there is no separate embedded service to start on the computer.
+
+For a count goal or a timed session, choose the mode and enter the target before starting. Keep the bridge connected until the board confirms the save. The bridge requests STOP at the first reported count or elapsed time that reaches the target. You can stop early.
 
 The main page contains the counter, duration and live distance, with phase feedback beneath the session controls. **Session records** in the header opens a separate dialog containing **Refresh** and **Export CSV**. **Device setup** opens the connection drawer.
 
@@ -39,7 +41,7 @@ The main page contains the counter, duration and live distance, with phase feedb
 | Move it fully out and wait for **Ready for your next pass** again. | “The area must remain clear for at least 0.3 seconds before another passage.” |
 | Repeat until five deliberate passages have been made. | Compare the displayed number with the manual count. If they differ, report the observed result rather than assuming the target was achieved. |
 | Click **Stop & save** and confirm the saved summary. | “The Arduino stores the session number, count and elapsed time in its local memory.” |
-| Click the header's **Session records** button. Use **Refresh** or **Export CSV** in that dialog if useful. | “These are compact participation records for later review.” |
+| Click the header's **Session records** button. Use **Refresh** or **Export CSV** in that dialog if useful. | “Open My progress and select the goal and date range to compare your daily pace. The CSV includes your sessions in that range.” |
 
 After presenting, confirm the session was saved, then press **Control+C** in the server's Terminal window.
 
@@ -61,7 +63,7 @@ The board saves the latest 16 completed summaries. It does not save the current 
 | No USB port appears. | Use a USB cable that supports data, connect the board securely, and check the port list again. A powered board alone does not prove that USB data is working. On a Mac, select the actual `/dev/cu.usbmodem...` device, not Bluetooth or debug-console. |
 | Port busy, connection fails, or upload fails while the dashboard is connected. | Close Serial Monitor and Serial Plotter, and close any other program reading the same port. Disconnect the dashboard before uploading firmware, then reconnect afterward. |
 | The browser cannot open the dashboard. | Confirm the server's Terminal window is still running and use `http://127.0.0.1:8765`. Start only one copy of the server. |
-| **Start session** is disabled. | Wait for a fresh device reading and passage-mode firmware identification. If disconnected, open **Device setup** and connect the Arduino port. Starting from the webpage requires no manually typed Arduino command. |
+| **Start session** is disabled. | Sign in, enter a whole-number goal for targeted practice, and wait for a fresh reading from passage-mode firmware. If disconnected, open **Device setup** and connect the Arduino port. Starting from the webpage requires no manually typed Arduino command. |
 | The count stays at zero and the page says **Clear the path to begin** (`WAIT_CLEAR`). | Start with the detection area empty and allow at least 0.3 seconds of clear readings. Starting with an object already in front intentionally does not count it. |
 | The page says **Ready for your next pass** (`ARMED`), but a passage does not count. | Cross directly in front at 2–25 cm and move more slowly. Use a flat, sufficiently large target facing the sensor. Three consecutive valid near readings are required. |
 | The page stays at **Pass counted · move fully away** (`OCCUPIED`). | Fully leave the detection area or move beyond 35 cm. Wait at least 0.3 seconds and look for **Ready for your next pass** before reversing direction. Merely reaching 26–34 cm is insufficient. |
