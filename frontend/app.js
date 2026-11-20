@@ -9,7 +9,10 @@ const ui = Object.fromEntries([
   'stateIndicator','stateTitle','recordsButton','recordsDialog','closeRecordsButton',
   'refreshHistoryButton','exportLink',
   'historyBody','historyEmpty','historyNote','portSelect','refreshPortsButton','connectButton',
-  'disconnectButton','setupFeedback','deviceName','firmwareValue','modeValue','lastResponse'
+  'disconnectButton','setupFeedback','deviceName','firmwareValue','modeValue','lastResponse',
+  'trainingTitle','profileSelect','newProfileButton','profileForm','profileName','profileFeedback',
+  'trainingMode','targetField','targetLabel','trainingTarget','goalProgress','modeHint','recordProfile',
+  'trendProtocol','trendTable','trendBody','trendSummary','trendNote','goalsHeader'
 ].map((id) => [id, $(id)]));
 
 let state = null;
@@ -46,7 +49,7 @@ function savedText(value) {
   const n = number(value);
   const date = new Date(n === null ? value : n * 1000);
   if (Number.isNaN(date.getTime())) return 'Not recorded';
-  return date.toLocaleString('en-CA', {month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});
+  return date.toLocaleString('en-CA', {year:'numeric',month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});
 }
 function connectionInfo() {
   const c = state?.connection || {};
@@ -73,7 +76,7 @@ function render() {
   const running = isRunning(d);
   const pending = busy();
   const knownMode = word(d.mode);
-  const supportsPassage = knownMode === 'PASSAGE' || (number(d.firmware) !== null && Number(d.firmware) >= 3 && !knownMode);
+  const supportsPassage = knownMode === 'PASSAGE';
   let connectionText = 'Disconnected', connectionType = 'disconnected';
   if (!apiAvailable) { connectionText = 'Server unavailable'; connectionType = 'error'; }
   else if (connected && stale) { connectionText = 'Connection interrupted'; connectionType = 'stale'; }
@@ -117,7 +120,9 @@ function render() {
   ui.stateIndicator.dataset.state = view.state;
   ui.stateTitle.textContent = view.title;
 
-  ui.startButton.disabled = !fresh || pending || running || !supportsPassage;
+  renderTraining(running);
+  const validTarget = ui.trainingMode.value === 'free' || ui.trainingTarget.validity.valid;
+  ui.startButton.disabled = !fresh || pending || running || !supportsPassage || !ui.profileSelect.value || !validTarget;
   ui.stopButton.disabled = !fresh || pending || !running;
   ui.refreshHistoryButton.disabled = !fresh || pending || running;
   ui.refreshPortsButton.disabled = mutationInFlight;
@@ -127,13 +132,16 @@ function render() {
   ui.startButton.setAttribute('aria-busy', String(awaitingCommand?.command === 'START'));
   ui.stopButton.setAttribute('aria-busy', String(awaitingCommand?.command === 'STOP'));
   const msg = currentMessage(feedback);
-  if (pending) applyMessage(ui.actionFeedback, awaitingCommand?.command === 'STOP' ? 'Waiting for the Arduino to stop and confirm the save…' : awaitingCommand?.command === 'START' ? 'Waiting for the Arduino to start…' : 'Waiting for the device response…');
+  if (state?.storage_error) applyMessage(ui.actionFeedback, state.storage_error, 'error');
+  else if (pending) applyMessage(ui.actionFeedback, awaitingCommand?.command === 'STOP' ? 'Waiting for the Arduino to stop and confirm the save…' : awaitingCommand?.command === 'START' ? 'Waiting for the Arduino to start…' : 'Waiting for the device response…');
   else if (msg) applyMessage(ui.actionFeedback,msg.text,msg.kind);
   else if (!apiAvailable) applyMessage(ui.actionFeedback,'The local server is unavailable. Live controls are paused.','error');
   else if (!connected) applyMessage(ui.actionFeedback,'Connect your Arduino to begin.');
   else if (!fresh) applyMessage(ui.actionFeedback,'Waiting for a fresh device reading.');
   else if (!supportsPassage) applyMessage(ui.actionFeedback,'Waiting for passage-mode firmware identification.');
-  else if (running) applyMessage(ui.actionFeedback,'Choose Stop & save when your session is finished.');
+  else if (!running && !ui.profileSelect.value) applyMessage(ui.actionFeedback,'Choose or add a training profile to start.');
+  else if (!running && !validTarget) applyMessage(ui.actionFeedback,'Enter a positive whole-number target.');
+  else if (running) applyMessage(ui.actionFeedback,state.active_training?.target ? 'Choose Stop & save to finish early.' : 'Choose Stop & save when your session is finished.');
   else applyMessage(ui.actionFeedback,'Clear the path, then start a session directly from this page.');
 
   ui.deviceName.textContent = connected ? String(c.device || 'Arduino UNO R4 Minima') : 'Not connected';
@@ -192,27 +200,180 @@ function sourceText(item) {
   if (/LOCAL|LIVE|HOST/.test(source)) return 'Saved on this Mac';
   return item.source ? String(item.source) : 'Source not recorded';
 }
-function renderHistory() {
-  const rows = Array.isArray(state?.history) ? state.history : [];
-  const signature = JSON.stringify(rows);
-  ui.historyNote.textContent = state?.storage_error ? String(state.storage_error) : 'Records describe participation. A movement count is not a measure of movement quality or clinical progress.';
-  ui.historyNote.dataset.kind = state?.storage_error ? 'error' : 'info';
-  ui.exportLink.setAttribute('aria-disabled',String(rows.length === 0 || !apiAvailable));
+const trainingLabels = {free: 'Free practice', count: 'Count goal', timed: 'Timed practice'};
+const targets = {count: '10', timed: '60'};
+let profileSignature = '';
+let recordData = {history: [], reports: []};
+let recordRequest = 0;
+let protocolKey = '';
+let pendingProfile = '';
+
+function protocolText(item) {
+  if (!item.training_mode) return 'Not recorded';
+  const label = trainingLabels[item.training_mode];
+  if (item.target == null) return label;
+  return label + ' · ' + item.target + (item.training_mode === 'count' ? ' passages' : ' seconds');
+}
+
+function renderProfiles() {
+  const profiles = state?.profiles || [];
+  const signature = JSON.stringify(profiles);
+  if (profileSignature !== signature) {
+    profileSignature = signature;
+    const selected = ui.profileSelect.value;
+    const filter = ui.recordProfile.value;
+    ui.profileSelect.replaceChildren(new Option('Choose a profile', ''));
+    ui.recordProfile.replaceChildren(new Option('All profiles', 'all'), new Option('Unassigned sessions', 'unassigned'));
+    for (const profile of profiles) {
+      ui.profileSelect.add(new Option(profile.name, profile.id));
+      ui.recordProfile.add(new Option(profile.name, profile.id));
+    }
+    ui.profileSelect.value = selected;
+    ui.recordProfile.value = filter;
+  }
+  if (pendingProfile && profiles.some(profile => String(profile.id) === pendingProfile)) {
+    ui.profileSelect.value = pendingProfile;
+    pendingProfile = '';
+  }
+}
+
+function renderTraining(running) {
+  renderProfiles();
+  const plan = state?.active_training;
+  if (plan) {
+    ui.profileSelect.value = String(plan.user_id);
+    ui.trainingMode.value = plan.training_mode;
+    if (plan.target != null) ui.trainingTarget.value = plan.target;
+  }
+  const locked = running || Boolean(plan) || busy();
+  ui.trainingTitle.textContent = plan ? 'Active session' : 'Next session';
+  for (const control of [ui.profileSelect, ui.trainingMode, ui.trainingTarget, ui.newProfileButton]) {
+    control.disabled = locked || !apiAvailable;
+  }
+  if (locked) closeProfileForm();
+  const mode = ui.trainingMode.value;
+  const timed = mode === 'timed';
+  ui.targetField.hidden = mode === 'free';
+  ui.targetLabel.textContent = timed ? 'Time limit (seconds)' : 'Target passages';
+  ui.goalProgress.hidden = !plan || mode === 'free';
+  if (!ui.goalProgress.hidden) {
+    const value = (timed ? state.device.seconds : state.device.count) ?? 0;
+    ui.goalProgress.max = plan.target;
+    ui.goalProgress.value = value;
+    ui.modeHint.textContent = timed
+      ? secondsText(Math.max(0, plan.target - value)) + ' remaining'
+      : value + ' of ' + plan.target + ' passages';
+  } else {
+    ui.modeHint.textContent = mode === 'free' ? 'Choose Stop & save whenever you finish.'
+      : 'The Mac sends Stop & save when the board reaches your ' + (timed ? 'time limit.' : 'passage target.');
+  }
+}
+
+function closeProfileForm() {
+  ui.profileForm.hidden = true;
+  ui.newProfileButton.setAttribute('aria-expanded', 'false');
+}
+
+function cell(tr, value, className) {
+  const td = tr.insertCell();
+  if (className) td.className = className;
+  td.textContent = value;
+  return td;
+}
+
+function renderTrend() {
+  const reports = recordData.reports;
+  ui.trendProtocol.hidden = reports.length === 0;
+  const report = reports.find(r => protocolText(r) === ui.trendProtocol.value);
+  ui.trendTable.hidden = ui.trendNote.hidden = !report;
+  ui.trendBody.replaceChildren();
+  if (!report) {
+    ui.trendSummary.textContent = ui.recordProfile.value === 'all' || ui.recordProfile.value === 'unassigned'
+      ? 'Choose a training profile to compare its training days.'
+      : 'Complete a session with this profile to begin a daily trend.';
+    return;
+  }
+  const latest = report.days[report.days.length - 1];
+  if (report.delta === null) {
+    ui.trendSummary.textContent = latest.pace === null
+      ? 'Pace is unavailable for the latest day because its recorded duration is zero.'
+      : 'First measured day: ' + latest.pace.toFixed(1) + ' passages/min. A second training day enables comparison.';
+  } else {
+    const delta = report.delta;
+    const change = (delta > 0 ? '+' : '') + delta.toFixed(1);
+    ui.trendSummary.textContent = latest.day + ' averaged ' + latest.pace.toFixed(1) +
+      ' passages/min (' + change + ' vs. ' + report.baseline_day + ').';
+  }
+  const hasGoal = report.target !== null;
+  ui.goalsHeader.hidden = !hasGoal;
+  const peak = report.days.reduce((max, day) => Math.max(max, day.pace || 0), 0);
+  for (const day of [...report.days].reverse()) {
+    const tr = ui.trendBody.insertRow();
+    cell(tr, day.day); cell(tr, day.sessions); cell(tr, day.count); cell(tr, secondsText(day.seconds));
+    if (hasGoal) cell(tr, day.goals_met + '/' + day.sessions);
+    const pace = cell(tr, day.pace === null ? '—' : day.pace.toFixed(1));
+    if (day.pace !== null) {
+      const track = document.createElement('span');
+      track.className = 'pace-track';
+      track.setAttribute('aria-hidden', 'true');
+      const bar = document.createElement('span');
+      bar.className = 'pace-bar';
+      bar.style.width = (peak ? day.pace / peak * 100 : 0) + '%';
+      track.append(bar);
+      pace.prepend(track);
+    }
+  }
+}
+
+function displayRecords() {
+  const rows = recordData.history;
+  const names = new Map((state?.profiles || []).map(p => [p.id, p.name]));
+  ui.exportLink.href = '/api/export.csv?user=' + encodeURIComponent(ui.recordProfile.value);
+  ui.exportLink.setAttribute('aria-disabled', String(!rows.length || !apiAvailable));
   ui.exportLink.tabIndex = rows.length && apiAvailable ? 0 : -1;
-  if (signature === historySignature) return;
-  historySignature = signature;
   ui.historyBody.replaceChildren();
   ui.historyEmpty.hidden = rows.length > 0;
-  [...rows].sort((a,b) => (number(b.id) ?? 0) - (number(a.id) ?? 0) || (number(b.saved_at) ?? 0) - (number(a.saved_at) ?? 0)).forEach((item) => {
-    const tr = document.createElement('tr');
-    const id = document.createElement('td'); id.className='session-cell'; id.textContent=item.id===null || item.id===undefined ? '—' : `#${String(item.id).padStart(3,'0')}`;
-    const count = document.createElement('td'); count.className='count-cell'; count.textContent=number(item.count)===null?'—':Math.floor(Number(item.count)).toLocaleString('en-US');
-    const duration=document.createElement('td'); duration.className='mono';duration.textContent=secondsText(item.seconds);
-    const type=document.createElement('td');const mode=document.createElement('span');mode.className='record-mode';mode.textContent=modeText(item);const source=document.createElement('span');source.className='record-source';source.textContent=sourceText(item);type.append(mode,source);
-    const saved=document.createElement('td');saved.textContent=savedText(item.saved_at);
-    tr.append(id,count,duration,type,saved);ui.historyBody.append(tr);
-  });
+  for (const row of rows) {
+    const tr = ui.historyBody.insertRow();
+    cell(tr, '#' + String(row.id).padStart(3, '0'), 'session-cell');
+    cell(tr, names.get(row.user_id) || 'Unassigned');
+    cell(tr, protocolText(row)); cell(tr, row.count, 'count-cell'); cell(tr, secondsText(row.seconds), 'mono');
+    const type = cell(tr, modeText(row));
+    const source = document.createElement('span');
+    source.className = 'record-source'; source.textContent = sourceText(row); type.append(source);
+    cell(tr, savedText(row.saved_at));
+  }
+  ui.trendProtocol.replaceChildren(...recordData.reports.map(r => new Option(protocolText(r), protocolText(r))));
+  if (recordData.reports.some(r => protocolText(r) === protocolKey)) ui.trendProtocol.value = protocolKey;
+  renderTrend();
 }
+
+async function renderHistory() {
+  if (!ui.recordsDialog.open || !apiAvailable) return;
+  ui.historyNote.textContent = state.storage_error || 'Daily pace describes observed training performance. Sensor placement and the exercise performed affect comparisons.';
+  ui.historyNote.dataset.kind = state.storage_error ? 'error' : 'info';
+  const filter = ui.recordProfile.value;
+  const signature = JSON.stringify([filter, state.archive_revision, profileSignature]);
+  if (signature === historySignature) return;
+  historySignature = signature;
+  const request = ++recordRequest;
+  recordData = {history: [], reports: []};
+  displayRecords();
+  ui.historyEmpty.hidden = true;
+  ui.trendSummary.textContent = 'Loading training records…';
+  try {
+    const response = await fetch('/api/records?user=' + encodeURIComponent(filter), {cache: 'no-store'});
+    if (!response.ok) throw new Error('Cannot load training records.');
+    const data = await response.json();
+    if (request !== recordRequest) return;
+    recordData = data;
+    displayRecords();
+  } catch (error) {
+    if (request !== recordRequest) return;
+    ui.trendSummary.textContent = 'Cannot load records. Reopen Session records to retry.';
+  }
+}
+
 function settleCommand() {
   if (!awaitingCommand) return;
   const {c,d}=connectionInfo();
@@ -250,10 +411,20 @@ async function requestState() {
   fetchInFlight=(async()=>{
     const controller=new AbortController();const timeout=setTimeout(()=>controller.abort(),4000);
     try{
-      const response=await fetch('/api/state',{cache:'no-store',signal:controller.signal});
+      const response=await fetch('/api/state?live=1',{cache:'no-store',signal:controller.signal});
       if(!response.ok)throw new Error(`Server returned ${response.status}`);
       const next=await response.json();
       if(!next||typeof next!=='object'||!next.connection)throw new Error('Invalid server response');
+      const previousPlan = state?.active_training;
+      if (previousPlan && !next.active_training && !awaitingCommand) {
+        const result = [...next.events].reverse().find(event =>
+          event.at >= previousPlan.started_at &&
+          new RegExp('^(SAVED|SAVE_FAILED) id=' + previousPlan.id + '(?: |$)').test(event.text));
+        if (result) {
+          if (result.text.startsWith('SAVE_FAILED')) flashMessage('The Arduino could not save this session.', 'error');
+          else flashMessage('Session saved. Open Session records to review it.', 'success');
+        }
+      }
       state=next;apiAvailable=true;renderPorts();settleCommand();render();
     }catch(error){apiAvailable=false;render();}
     finally{clearTimeout(timeout);fetchInFlight=null;}
@@ -272,17 +443,64 @@ async function post(path,body={}) {
 async function sendCommand(command) {
   if(busy())return;
   mutationInFlight=true;awaitingCommand={command,started:Date.now(),received:number(state?.connection?.last_received_at)??0,sessionId:state?.device?.session_id??null};render();
-  try{await post('/api/command',{command});}
+  const body = {command};
+  if (command === 'START') {
+    body.training = {user_id: Number(ui.profileSelect.value), training_mode: ui.trainingMode.value,
+      target: ui.trainingMode.value === 'free' ? null : ui.trainingTarget.valueAsNumber};
+  }
+  try{await post('/api/command',body);}
   catch(error){awaitingCommand=null;flashMessage(error.name==='AbortError'?'The device request timed out. Check the connection.':error.message,'error',false,10000);}
   finally{mutationInFlight=false;await requestState();render();}
 }
+ui.trainingMode.addEventListener('change', () => {
+  if (ui.trainingMode.value !== 'free') ui.trainingTarget.value = targets[ui.trainingMode.value];
+  render();
+});
+ui.profileSelect.addEventListener('change', render);
+ui.trainingTarget.addEventListener('input', () => {
+  targets[ui.trainingMode.value] = ui.trainingTarget.value;
+  render();
+});
+ui.newProfileButton.addEventListener('click', () => {
+  ui.profileForm.hidden = !ui.profileForm.hidden;
+  ui.newProfileButton.setAttribute('aria-expanded', String(!ui.profileForm.hidden));
+  if (!ui.profileForm.hidden) ui.profileName.focus();
+});
+ui.profileForm.addEventListener('submit', async event => {
+  event.preventDefault();
+  const button = ui.profileForm.querySelector('button');
+  button.disabled = true;
+  ui.profileFeedback.textContent = '';
+  try {
+    const {profile} = await post('/api/profiles', {name: ui.profileName.value});
+    pendingProfile = String(profile.id);
+    ui.profileName.value = '';
+    closeProfileForm();
+    await requestState();
+    render();
+  } catch (error) {
+    ui.profileFeedback.textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+});
+ui.recordProfile.addEventListener('change', () => { protocolKey = ''; renderHistory(); });
+ui.trendProtocol.addEventListener('change', () => { protocolKey = ui.trendProtocol.value; renderTrend(); });
+
 ui.startButton.addEventListener('click',()=>sendCommand('START'));
 ui.stopButton.addEventListener('click',()=>sendCommand('STOP'));
 ui.refreshHistoryButton.addEventListener('click',()=>sendCommand('LOG'));
 ui.exportLink.addEventListener('click',(event)=>{if(ui.exportLink.getAttribute('aria-disabled')==='true')event.preventDefault();});
 ui.setupButton.addEventListener('click',()=>{ui.setupDialog.showModal();requestState();});
 ui.closeSetupButton.addEventListener('click',()=>ui.setupDialog.close());
-ui.recordsButton.addEventListener('click',()=>{ui.recordsDialog.showModal();requestState();});
+ui.recordsButton.addEventListener('click',()=>{
+  ui.recordProfile.value = ui.profileSelect.value || 'all';
+  protocolKey = '';
+  historySignature = '';
+  ui.recordsDialog.showModal();
+  renderHistory();
+  requestState();
+});
 ui.closeRecordsButton.addEventListener('click',()=>ui.recordsDialog.close());
 ui.recordsDialog.addEventListener('click',(event)=>{
   if(event.target!==ui.recordsDialog)return;

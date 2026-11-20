@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+from datetime import datetime
 import io
 import json
 import math
@@ -13,13 +14,18 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
-import tempfile
+import sqlite3
 import threading
 import time
 from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import unquote, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 import webbrowser
+
+if __package__:
+    from .training import SESSION_COLUMNS, TrainingStore, daily_reports, training_plan
+else:  # Direct launch via start-demo.command.
+    from training import SESSION_COLUMNS, TrainingStore, daily_reports, training_plan
 
 try:
     import serial
@@ -102,7 +108,13 @@ class Bridge:
         self.connection = dict(connected=False, port=None, device=None, error=None,
                                last_received_at=None)
         self.device_id = None
+        self.store = TrainingStore(self.history_path.with_suffix(".sqlite3"))
+        self.profiles = self.store.profiles()
         self.history = {}
+        self.dirty = {}
+        self.archive_revision = 0
+        self.active_training = None
+        self.import_error = None
         self.samples = deque(maxlen=1200)
         self.events = deque(maxlen=200)
         self.pending = None
@@ -119,6 +131,8 @@ class Bridge:
         self.last_attempt = float("-inf")
         self.generation = 0
         self._load_history()
+        for record in self.store.load():
+            self.history[record["device_id"], record["id"]] = record
 
     def _event(self, text, kind="info"):
         self.events.append(dict(at=self.clock(), text=str(text)[:1000], kind=kind))
@@ -147,6 +161,7 @@ class Bridge:
             content = json.loads(self.history_path.read_text(encoding="utf-8"))
             if content.get("version") != 1 or not isinstance(content.get("sessions"), list):
                 raise ValueError("Unrecognized history format")
+            records = []
             for row in content["sessions"]:
                 if not isinstance(row, dict) or not isinstance(row.get("device_id"), str):
                     continue
@@ -157,73 +172,89 @@ class Bridge:
                 mode = row.get("mode") if isinstance(row.get("mode"), str) else None
                 record = dict(device_id=row["device_id"], id=row["id"], count=row["count"],
                               seconds=row["seconds"], saved_at=saved_at, mode=mode, source="local")
-                self.history[(record["device_id"], record["id"])] = record
-        except (OSError, ValueError, TypeError, AttributeError) as error:
-            self.storage_error = "Local history could not be read; original file is preserved: %s" % error
-            self._event(self.storage_error, "error")
+                records.append({key: record.get(key) for key in SESSION_COLUMNS})
+            self.store.save(records, import_only=True)
+        except (OSError, ValueError, TypeError, AttributeError, sqlite3.Error) as error:
+            self.import_error = "Legacy history could not be imported from sessions.json: %s" % error
+            self._event(self.import_error, "error")
 
     def _persist(self):
-        # Never silently replace an unreadable history file with partial data.
-        if self.storage_error and "could not be read" in self.storage_error:
+        if not self.dirty:
             return
-        temporary = None
         try:
-            self.history_path.parent.mkdir(parents=True, exist_ok=True)
-            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8",
-                                             dir=str(self.history_path.parent),
-                                             prefix=".sessions-", suffix=".tmp", delete=False) as stream:
-                temporary = stream.name
-                json.dump(dict(version=1, sessions=list(self.history.values())), stream,
-                          ensure_ascii=False, allow_nan=False, indent=2)
-                stream.write("\n")
-                stream.flush()
-                os.fsync(stream.fileno())
-            os.replace(temporary, self.history_path)
+            self.store.save(self.dirty.values())
+            self.dirty.clear()
             self.storage_error = None
-        except (OSError, ValueError) as error:
+        except sqlite3.Error as error:
             self.storage_error = "Board data received, but local history could not be saved: %s" % error
             self._event(self.storage_error, "error")
-        finally:
-            if temporary and os.path.exists(temporary):
-                try:
-                    os.unlink(temporary)
-                except OSError:
-                    pass
+
+    def add_profile(self, name):
+        with self.lock:
+            profile = self.store.profile(name)
+            self.profiles = self.store.profiles()
+            return profile
 
     def _merge_record(self, record_id, count, seconds, acknowledged=False):
         if not self.device_id or not record_id:
             return
         key = (self.device_id, record_id)
         old = self.history.get(key, {})
-        # LOG contains no mode or date: preserve known metadata, never infer old
-        # records from the currently installed firmware (old id=1 may be CYCLE).
-        row = dict(device_id=self.device_id, id=record_id, count=count, seconds=seconds,
-                   saved_at=old.get("saved_at"), source="board", mode=old.get("mode"))
+        row = {field: old.get(field) for field in SESSION_COLUMNS}
+        row.update(device_id=self.device_id, id=record_id, count=count, seconds=seconds, source="board")
         if acknowledged:
-            row["saved_at"] = old.get("saved_at") or self.clock()
-            row["mode"] = self.device.get("mode")
-        self.history[key] = row
+            if row["saved_at"] is None:
+                row["saved_at"] = self.clock()
+            if row["mode"] is None:
+                row["mode"] = self.device.get("mode")
+        active = self.active_training
+        if active and active["id"] == record_id:
+            for field in ("started_at", "training_day", "training_mode", "target", "user_id", "mode"):
+                row[field] = active[field]
+            self.active_training = None
+        if old != row:
+            self.history[key] = self.dirty[key] = row
+            self.archive_revision += 1
 
-    def snapshot(self):
+    def _rows(self, user_filter):
+        rows = self.history.values()
+        if user_filter != "all":
+            rows = (row for row in rows if row["user_id"] == user_filter)
+        return sorted(rows, key=lambda row: (row["saved_at"] or 0, row["device_id"], row["id"]), reverse=True)
+
+    def records(self, user_filter="all"):
+        with self.lock:
+            rows = self._rows(user_filter)
+            return dict(history=rows, reports=daily_reports(rows) if type(user_filter) is int else [])
+
+    def snapshot(self, include_history=True):
         ports = self.ports()
         with self.lock:
             connection = dict(self.connection)
             last = connection["last_received_at"]
             connection["stale"] = (not connection["connected"] or last is None or
                                    self.clock() - last > STALE_SECONDS)
-            history = sorted(self.history.values(), key=lambda row: (row["device_id"], row["id"]), reverse=True)
-            return dict(connection=connection, device=dict(self.device),
-                        history=[dict(row) for row in history], samples=list(self.samples),
-                        events=list(self.events), ports=ports,
-                        pending_command=self.pending["command"] if self.pending else None,
-                        storage_error=self.storage_error)
+            result = dict(connection=connection, device=dict(self.device),
+                          events=list(self.events), ports=ports, profiles=list(self.profiles),
+                          active_training=dict(self.active_training) if self.active_training else None,
+                          archive_revision=self.archive_revision,
+                          pending_command=self.pending["command"] if self.pending else None,
+                          storage_error=self.storage_error or self.import_error)
+            if include_history:
+                result.update(history=self._rows("all"), samples=list(self.samples))
+            return result
 
-    def export_csv(self):
+    def export_csv(self, user_filter="all"):
         output = io.StringIO(newline="")
         fields = ["device_id", "id", "count", "seconds", "saved_at", "source", "mode"]
+        fields += ["user_id", "profile", "training_mode", "target", "started_at", "training_day"]
+        with self.lock:
+            names = {p["id"]: p["name"] for p in self.profiles}
+            rows = self._rows(user_filter)
         writer = csv.DictWriter(output, fieldnames=fields)
         writer.writeheader()
-        for row in self.snapshot()["history"]:
+        for record in rows:
+            row = dict(record, profile=names.get(record["user_id"]))
             # Device identifiers are external strings. Avoid spreadsheet formulas.
             escaped = {key: ("'" + value if isinstance(value, str) and value[:1] in "=+-@" and value else value)
                        for key, value in row.items() if key in fields}
@@ -255,7 +286,7 @@ class Bridge:
             self._event("Disconnected from the board.")
         return True, "Disconnected."
 
-    def command(self, command):
+    def command(self, command, training=None):
         if not isinstance(command, str) or command.strip().upper() not in COMMANDS:
             return False, "Allowed commands: START, STOP, LOG, STATUS, HELP."
         command = command.strip().upper()
@@ -272,10 +303,20 @@ class Bridge:
                 return False, "The board must report IDLE before %s." % command
             if command == "STOP" and state != "RUNNING":
                 return False, "The board has not reported a running session."
+            if training is not None:
+                if command != "START" or not isinstance(training, dict):
+                    return False, "Training settings are accepted only for START."
+                if self.device["mode"] != "PASSAGE":
+                    return False, "Identify the passage-counting firmware first."
+                try:
+                    training = training_plan(training.get("user_id"), training.get("training_mode"),
+                                             training.get("target"), self.profiles)
+                except ValueError as error:
+                    return False, str(error)
             if command == "STOP":
                 # An IDLE telemetry line cannot stand in for a SAVED acknowledgement.
                 self.initial_log_requested = True
-            self.pending = dict(command=command, sent=False, at=None)
+            self.pending = dict(command=command, sent=False, at=None, training=training)
         return True, "%s queued; waiting for board confirmation." % command
 
     def _queue_auto(self, command):
@@ -285,6 +326,14 @@ class Bridge:
     def _ack(self, command):
         if self.pending and self.pending["command"] == command:
             self.pending = None
+
+    def _check_goal(self, metric, value):
+        plan = self.active_training
+        if (plan and plan["training_mode"] == metric and value is not None
+                and value >= plan["target"] and not self.pending and self.device["state"] == "RUNNING"):
+            ok, _ = self.command("STOP")
+            if ok:
+                self._event("Training goal reached. Waiting for the board to stop and save.")
 
     def feed_line(self, line):
         """Process only a real serial line; tests supply recorded protocol lines."""
@@ -317,14 +366,26 @@ class Bridge:
                 self.samples.append(dict(at=self.clock(), distance_cm=self.device["distance_cm"],
                                          count=self.device["count"]))
                 self._ack("STATUS")
-                if state == "IDLE" and not self.initial_log_requested and not (
+                if state == "RUNNING":
+                    self._check_goal("count", uint32(fields.get("COUNT")))
+                    self._check_goal("timed", uint32(fields.get("SEC")))
+                if state == "IDLE" and (not self.initial_log_requested or self.active_training) and not (
                         self.pending and self.pending["command"] == "STOP"):
                     self.initial_log_requested = True
                     self._queue_auto("LOG")
             elif line.startswith("STARTED "):
                 record_id = uint32(fields.get("id"))
                 if record_id:
-                    self.device.update(state="RUNNING", session_id=record_id)
+                    plan = (self.pending.get("training") if self.pending and self.pending["sent"]
+                            and self.pending["command"] == "START" else None)
+                    started_at = self.clock()
+                    if plan:
+                        self.active_training = dict(plan, id=record_id, started_at=started_at,
+                                                    training_day=datetime.fromtimestamp(started_at).date().isoformat(),
+                                                    mode=self.device["mode"])
+                    else:
+                        self.active_training = None
+                    self.device.update(state="RUNNING", session_id=record_id, count=0, seconds=0)
                     self._ack("START")
                     self._event(line, "success")
             elif line.startswith("SAVED "):
@@ -338,6 +399,7 @@ class Bridge:
                     self.initial_log_requested = True
                     self._queue_auto("LOG")
             elif line.startswith("SAVE_FAILED "):
+                self.active_training = None
                 self.device["state"] = "IDLE"
                 self._ack("STOP")
                 self._event(line + " — the board did not confirm a saved record.", "error")
@@ -348,6 +410,9 @@ class Bridge:
                     for values in self.log_rows:
                         self._merge_record(*values)
                     self._persist()
+                    if self.active_training and self.device["state"] == "IDLE":
+                        self.active_training = None
+                        self._event("Session ended without a confirmed saved record.", "error")
                     self._event("Read %d saved board records." % len(self.log_rows), "success")
                     self.log_rows = None
                     self._ack("LOG")
@@ -360,6 +425,7 @@ class Bridge:
                 if value is not None:
                     self.device["count"] = value
                     self._event(line, "count")
+                    self._check_goal("count", value)
             elif line.startswith("EVENT="):
                 self._event(line)
             elif line.startswith(("Already stopped", "Already running")):
@@ -378,6 +444,7 @@ class Bridge:
             if self.pending:
                 self._event("No confirmation for %s: connection ended." % self.pending["command"], "error")
             self.pending = None
+            self.active_training = None
             self.auto_queue.clear()
             self.rx.clear()
             self.log_rows = None
@@ -460,6 +527,8 @@ class Bridge:
                 self._event("No board acknowledgement for %s. State is unconfirmed." % self.pending["command"], "error")
                 if self.pending["command"] == "LOG":
                     self.log_rows = None
+                if self.pending["command"] == "STOP" and self.active_training and self.device["state"] == "IDLE":
+                    self._queue_auto("LOG")
                 self.pending = None
             if self.pending is None and self.auto_queue:
                 command = self.auto_queue.popleft()
@@ -516,6 +585,9 @@ class Bridge:
         self._drop_connection(None)
         if self.worker and self.worker is not threading.current_thread():
             self.worker.join(timeout=2)
+        with self.lock:
+            self._persist()
+            self.store.db.close()
 
 
 class DashboardServer(ThreadingHTTPServer):
@@ -574,15 +646,29 @@ class Handler(BaseHTTPRequestHandler):
         if not self._host():
             self._send(403, dict(ok=False, message="Only a local Host header is allowed."))
             return
-        path = urlsplit(self.path).path
+        url = urlsplit(self.path)
+        path = url.path
+        query = parse_qs(url.query)
+        user_filter = "all"
+        if path in {"/api/records", "/api/export.csv"}:
+            value = query.get("user", ["all"])[0]
+            if value == "unassigned":
+                user_filter = None
+            elif value != "all":
+                user_filter = uint32(value)
+                if not user_filter:
+                    self._send(400, dict(ok=False, message="Invalid profile filter."))
+                    return
         if path == "/api/health":
             self._send(200, dict(ok=True, application="ece198-motion-counter", version="1.0.0"))
         elif path == "/api/state":
-            self._send(200, self.server.bridge.snapshot())
+            self._send(200, self.server.bridge.snapshot(include_history=query.get("live") != ["1"]))
+        elif path == "/api/records":
+            self._send(200, self.server.bridge.records(user_filter))
         elif path == "/api/ports":
             self._send(200, dict(ports=self.server.bridge.ports()))
         elif path == "/api/export.csv":
-            self._send(200, self.server.bridge.export_csv().encode("utf-8-sig"), "text/csv; charset=utf-8",
+            self._send(200, self.server.bridge.export_csv(user_filter).encode("utf-8-sig"), "text/csv; charset=utf-8",
                        {"Content-Disposition": 'attachment; filename="exercise-sessions.csv"'})
         elif path.startswith("/api/"):
             self._send(404, dict(ok=False, message="Unknown API route."))
@@ -620,12 +706,21 @@ class Handler(BaseHTTPRequestHandler):
             self._send(400, dict(ok=False, message="Invalid JSON object."))
             return
         path = urlsplit(self.path).path
+        if path == "/api/profiles":
+            try:
+                profile = self.server.bridge.add_profile(data.get("name"))
+                self._send(200, dict(ok=True, profile=profile))
+            except ValueError as error:
+                self._send(400, dict(ok=False, message=str(error)))
+            except sqlite3.Error as error:
+                self._send(503, dict(ok=False, message="Cannot save profile: %s" % error))
+            return
         if path == "/api/connect":
             ok, message = self.server.bridge.connect(data.get("port"))
         elif path == "/api/disconnect":
             ok, message = self.server.bridge.disconnect()
         elif path == "/api/command":
-            ok, message = self.server.bridge.command(data.get("command"))
+            ok, message = self.server.bridge.command(data.get("command"), data.get("training"))
         else:
             self._send(404, dict(ok=False, message="Unknown API route."))
             return

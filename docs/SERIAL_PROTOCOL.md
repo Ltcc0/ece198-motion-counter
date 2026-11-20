@@ -118,14 +118,23 @@ The local server at `http://127.0.0.1:8765` serves the buildless frontend and ow
 | --- | --- |
 | `GET /api/health` | Identify the running local application |
 | `GET /api/state` | Return the current bridge/dashboard snapshot |
+| `GET /api/state?live=1` | Poll live readings, profiles, active training and archive revision without the full history or sample buffer |
+| `GET /api/records?user=ID` | Saved sessions and per-protocol daily reports for one profile. Use `all` or `unassigned` for history only |
+| `POST /api/profiles` | JSON `{ "name": "Demo A" }`, creates a uniquely named local profile and returns its numeric ID |
 | `GET /api/ports` | Return the currently enumerated serial ports |
-| `GET /api/export.csv` | Download saved-session data as CSV |
+| `GET /api/export.csv` | Download saved-session data as CSV, with the same optional `user` filter |
 | `POST /api/connect` | JSON `{ "port": "/dev/cu.usbmodem..." }` |
 | `POST /api/disconnect` | JSON `{}` |
 | `POST /api/command` | JSON `{ "command": "START" }`; allowed commands are `START`, `STOP`, `LOG`, `STATUS`, `HELP` |
 
-POST requests must use `Content-Type: application/json` and an `Origin` matching the local HTTP origin, for example `http://127.0.0.1:8765`. They return `{ "ok": true/false, "message": "..." }`; acceptance is not a board acknowledgment. The frontend follows subsequent state/events to learn whether START, STOP or LOG completed.
+POST requests require `Content-Type: application/json` and a matching local HTTP origin. For example, the dashboard queues a 60-second session with this request to `/api/command`:
 
-The state snapshot groups information under `connection`, `device`, `history`, `samples`, `events`, `ports` and `pending_command`, with `storage_error` for local archive failures. CSV columns are `device_id,id,count,seconds,saved_at,source,mode`; `saved_at` is a computer-observed save time when known, not a board-supplied calendar timestamp. The serial messages above remain the board's source of truth. See `backend/server.py` for the complete HTTP response schema and error handling.
+```json
+{"command":"START","training":{"user_id":1,"training_mode":"timed","target":60}}
+```
 
-The bridge's local session archive is `runtime/sessions.json`; it is excluded from Git. It complements the board's finite history and must not be confused with proof that a pending STOP has completed successfully.
+Training modes are `free` (null target), `count` (passages) and `timed` (seconds). The bridge validates the profile and locks the settings to the ID from the board’s STARTED response. Earlier clients may still send a plain START for an unassigned session. Target modes send the existing serial STOP once fresh board data reaches the goal. STOP remains available for an early finish.
+
+The full state snapshot includes `connection`, `device`, `history`, `samples`, `events`, `ports`, `pending_command`, `profiles`, `active_training`, `archive_revision` and `storage_error`. The bridge stores profiles and saved summaries in `runtime/sessions.sqlite3` and imports valid legacy `runtime/sessions.json` rows by device and session ID. An interrupted LOG or an IDLE status alone never creates a saved session.
+
+CSV keeps the original columns and appends `user_id,profile,training_mode,target,started_at,training_day`. The original `mode` field is the firmware counting rule. Start and save times are Unix seconds observed by the bridge. Imported board-only rows have no inferred profile, training mode or calendar date.
