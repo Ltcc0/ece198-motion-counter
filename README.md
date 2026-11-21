@@ -50,7 +50,7 @@ For example, if you complete one 60-second timed session on each of two days and
 
 ### One-click AI training review
 
-On the hosted site, open **Progress**, choose a date range, and click **Analyze with DeepSeek**. The review covers all training modes in that range. The mode and target selector under **Daily pace** applies only to that chart.
+On the hosted site, open **Progress**, choose a date range, and click **Analyze with your personal ai assistant**. The review covers all training modes in that range. The mode and target selector under **Daily pace** applies only to that chart.
 
 The Worker calculates daily passages, total training time, and weighted passages per minute from the signed-in account’s records. The results show the first and last training days and their measured differences. This table still works if DeepSeek is unavailable or the API account runs out of credit. DeepSeek explains the changes, suggests one next session within the user’s existing exercise plan, and offers a practical tip for making the next comparison useful. A single training day establishes a baseline. If a day has no recorded duration, its pace and any change that depends on it appear as a dash.
 
