@@ -54,7 +54,7 @@ async function askDeepSeek(key, dataset) {
         ]
       }),
       signal,
-      redirect: 'error'
+      redirect: 'manual'
     });
     if (response.ok) {
       const payload = await response.json();
@@ -65,9 +65,8 @@ async function askDeepSeek(key, dataset) {
     if (signal.aborted) throw new HttpError(504, 'DeepSeek took too long. Try again.');
     throw new HttpError(502, 'Unable to read a review from DeepSeek. Try again.');
   }
-  if ([401, 402, 403].includes(response.status)) {
-    throw new HttpError(503, 'DeepSeek is unavailable. The site operator should check API access and billing.');
-  }
+  if (response.status === 402) throw new HttpError(503, 'DeepSeek reports insufficient API credit. Contact the site operator.');
+  if ([401, 403].includes(response.status)) throw new HttpError(503, 'DeepSeek rejected API access. Contact the site operator.');
   if (response.status === 429) throw new HttpError(429, 'DeepSeek is busy. Try again in a minute.');
   if (!response.ok) throw new HttpError(502, 'DeepSeek is temporarily unavailable. Try again.');
   const review = {};

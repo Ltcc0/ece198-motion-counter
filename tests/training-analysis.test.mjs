@@ -56,6 +56,7 @@ test('D1 scopes daily counts, seconds and weighted pace to the signed-in account
   add(2, '2026-01-03', 12345, 11);
   const provider = t.mock.method(globalThis, 'fetch', async (url, init) => {
     assert.equal(url, 'https://api.deepseek.com/chat/completions');
+    assert.equal(init.redirect, 'manual');
     assert.equal(init.headers.Authorization, 'Bearer synthetic-test-only');
     const body = JSON.parse(init.body);
     assert.equal(body.response_format.type, 'json_object');
@@ -132,7 +133,7 @@ test('long ranges retain all sessions with monthly detail between the baseline a
 test('provider failures and incomplete output return a retryable error without leaking provider content', async t => {
   const {add, call} = fixture(t);
   add(1, '2026-01-10', 10, 60);
-  const cases = [[401,503],[402,503],[429,429],[500,502],[200,502]];
+  const cases = [[302,502],[401,503],[402,503],[429,429],[500,502],[200,502]];
   let upstream;
   t.mock.method(globalThis, 'fetch', async () => upstream === 200 ? completion({tip:'missing fields'}) : new Response('private error', {status:upstream}));
   for (const [code, expected] of cases) {
