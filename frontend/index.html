@@ -3,93 +3,108 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="color-scheme" content="light">
-  <meta name="theme-color" content="#f4f3ec">
-  <title>STEPS — Movement Counter</title>
+  <meta name="theme-color" content="#f7f7f3">
+  <title>Training studio — STEPS</title>
+  <link rel="icon" href="/assets/mark.svg" type="image/svg+xml">
+  <link rel="preload" href="/assets/barlow-condensed-bold.ttf" as="font" type="font/ttf" crossorigin>
   <link rel="stylesheet" href="/styles.css">
   <script src="/app.js" defer></script>
 </head>
 <body>
-  <div class="app-shell">
-    <header class="site-header">
-      <a class="brand" href="/" aria-label="STEPS movement counter home">
-        <span class="brand-symbol" aria-hidden="true"><i></i><i></i><i></i></span>
-        <span>STEPS <span class="brand-divider">/</span> <span class="brand-sub">Movement Counter</span></span>
-      </a>
-      <div class="header-actions">
-        <a class="text-button" href="#progress">My progress</a>
-        <button class="text-button records-button" id="recordsButton" type="button" aria-haspopup="dialog">Session records</button>
-        <span class="connection-pill" id="connectionPill"><span class="status-dot"></span><span id="connectionLabel">Disconnected</span></span>
-        <button class="text-button setup-button" id="setupButton" type="button" aria-haspopup="dialog">Device setup <span aria-hidden="true">↗</span></button>
+  <a class="skip-link" href="#studio">Skip to training</a>
+  <header class="site-header">
+    <div class="topbar shell">
+      <a class="brand" href="#studio" aria-label="STEPS training studio"><span class="brand-symbol" aria-hidden="true"><i></i><i></i><i></i></span><span class="wordmark">STEPS</span></a>
+      <nav class="tabs" aria-label="Workspace">
+        <a class="nav-item" href="#studio" id="studioNav" aria-current="location"><svg class="icon" aria-hidden="true" focusable="false"><use href="/assets/icons.svg#activity"></use></svg> Training</a>
+        <a class="nav-item" href="#progress" id="progressNav"><svg class="icon" aria-hidden="true" focusable="false"><use href="/assets/icons.svg#chart-no-axes-column-increasing"></use></svg> Progress</a>
+        <button class="nav-item" id="recordsButton" type="button" aria-haspopup="dialog"><svg class="icon" aria-hidden="true" focusable="false"><use href="/assets/icons.svg#history"></use></svg> Records</button>
+      </nav>
+      <div class="header-tools">
+        <button class="connection-pill" id="setupButton" type="button" aria-label="Device setup" aria-haspopup="dialog">
+          <span id="connectionPill" class="connection-state"><span class="status-dot"></span><span id="connectionLabel">Disconnected</span></span><svg class="icon" aria-hidden="true" focusable="false"><use href="/assets/icons.svg#chevron-down"></use></svg>
+        </button>
+        <details class="account-menu" id="accountMenu">
+          <summary aria-label="Account menu" title="Account"><svg class="icon" aria-hidden="true" focusable="false"><use href="/assets/icons.svg#user-round"></use></svg></summary>
+          <div class="account-popover"><span id="accountEmail"></span><button class="text-button" id="logoutButton" type="button"><svg class="icon" aria-hidden="true" focusable="false"><use href="/assets/icons.svg#log-out"></use></svg> Sign out</button></div>
+        </details>
       </div>
-    </header>
-
-    <main>
-      <section class="intro" aria-labelledby="pageTitle">
-        <div><p class="eyebrow">ECE198 PROTOTYPE</p><h1 id="pageTitle">Movement participation,<br><em>made visible.</em></h1></div>
-        <button class="button button-outline presentation-toggle" id="presentationButton" type="button" aria-pressed="false"><span class="expand-icon" aria-hidden="true">⛶</span><span id="presentationLabel">Presentation mode</span></button>
-      </section>
-
-      <section class="session-stage" aria-label="Live movement session">
-        <div class="counter-pane">
-          <div class="session-topline"><p class="eyebrow" id="sessionEyebrow">LIVE SESSION</p><span class="session-id" id="sessionId">Ready when you are</span></div>
-          <div class="count-label">Movement count <span class="unit-tag">PASSAGES</span></div>
-          <div class="count-row"><div class="count-value" id="countValue" aria-label="No movement count available">—</div><span class="count-mark" aria-hidden="true">↗</span></div>
-          <p class="count-rule">One pass = one count.<br><strong>Down + up = two counts.</strong></p>
-          <div class="session-metrics"><div><span class="metric-label">Session duration</span><span class="metric-value mono" id="durationValue">—</span></div><div class="metric-divider"></div><div><span class="metric-label">Live distance</span><span class="metric-value"><span id="distanceValue">—</span><span class="metric-unit" id="distanceUnit"> cm</span></span></div></div>
-          <div class="session-actions"><button class="button button-primary" type="button" id="startButton" disabled><span class="play-icon" aria-hidden="true"></span>Start session</button><button class="button button-stop" type="button" id="stopButton" disabled><span class="stop-icon" aria-hidden="true"></span>Stop &amp; save</button></div>
-          <div class="phase-feedback"><span class="state-indicator" id="stateIndicator" data-state="disconnected"></span><span id="stateTitle">Waiting for connection</span></div>
-          <p class="action-feedback" id="actionFeedback" aria-live="polite">Connect your Arduino to begin.</p>
-        </div>
-
-        <aside class="training-panel" aria-labelledby="trainingTitle">
-          <h2 id="trainingTitle">Next session</h2>
-          <div class="account-line"><span id="accountEmail"></span><button class="text-button" type="button" id="logoutButton">Sign out</button></div>
-          <label for="trainingMode">Training mode</label>
-          <select id="trainingMode">
-            <option value="free">Free practice</option>
-            <option value="count">Count goal</option>
-            <option value="timed">Timed practice</option>
-          </select>
-          <div id="targetField" hidden><label id="targetLabel" for="trainingTarget">Target passages</label>
-            <input type="number" id="trainingTarget" min="1" max="4294967295" step="1" value="10" required></div>
-          <p class="mode-hint" id="modeHint">Choose Stop &amp; save whenever you finish.</p>
-          <progress id="goalProgress" aria-label="Training goal progress" hidden></progress>
-        </aside>
-
-      </section>
-
-
-        <section class="trend-panel" id="progress" aria-labelledby="trendTitle">
-          <div class="trend-heading"><h2 id="trendTitle">My daily progress</h2><select id="trendProtocol" aria-label="Training mode and target for comparison" hidden></select></div>
-          <div class="date-controls">
-            <label>From <input type="date" id="dateFrom"></label>
-            <label>To <input type="date" id="dateTo"></label>
-            <button class="text-button" type="button" id="clearDates" hidden>Clear dates</button>
+    </div>
+  </header>
+  <main class="shell" id="studio">
+    <div class="page-heading">
+      <div><div class="dayline"><svg class="icon" aria-hidden="true" focusable="false"><use href="/assets/icons.svg#calendar-days"></use></svg><time id="studioDate"></time></div><h1>Training studio</h1></div>
+      <button class="button button-outline presentation-toggle" id="presentationButton" type="button" aria-pressed="false"><svg class="icon" aria-hidden="true" focusable="false"><use href="/assets/icons.svg#maximize"></use></svg><span id="presentationLabel">Presentation mode</span></button>
+    </div>
+    <div class="studio-grid">
+      <section class="session-card" aria-labelledby="liveTitle">
+        <div class="session-hero">
+          <img src="/assets/track-session.jpg" alt="" fetchpriority="high" class="hero-photo">
+          <div class="hero-content">
+            <div class="live-kicker"><svg class="icon" aria-hidden="true" focusable="false"><use href="/assets/icons.svg#activity"></use></svg> <span id="sessionEyebrow">LIVE SESSION</span></div>
+            <h2 id="liveTitle">Movement counter</h2>
+            <p class="action-feedback" id="actionFeedback" aria-live="polite">Connect your Arduino to begin.</p>
+            <div class="session-actions">
+              <button class="button hero-primary" id="heroConnect" type="button" aria-haspopup="dialog"><svg class="icon" aria-hidden="true" focusable="false"><use href="/assets/icons.svg#plug"></use></svg> Connect device</button>
+              <button class="button hero-primary" id="startButton" type="button" hidden disabled><svg class="icon" aria-hidden="true" focusable="false"><use href="/assets/icons.svg#play"></use></svg> Start session</button>
+              <button class="button hero-primary" id="stopButton" type="button" hidden disabled><svg class="icon" aria-hidden="true" focusable="false"><use href="/assets/icons.svg#square"></use></svg> Stop &amp; save</button>
+            </div>
           </div>
-          <p id="trendSummary" role="status">Loading your training days…</p>
-          <div class="trend-scroll" id="trendTable" hidden><table>
-            <thead><tr><th>Training day</th><th>Sessions</th><th>Passages</th><th>Duration</th><th id="goalsHeader">Goals met</th><th>Passages/min</th></tr></thead>
-            <tbody id="trendBody"></tbody>
-          </table></div>
-          <p id="trendNote" class="history-note" hidden>Pace uses total passages divided by total minutes across sessions with a recorded duration above zero. Training days follow your computer’s local date at session start.</p>
-        </section>
-    </main>
-    <footer><span>STEPS <span aria-hidden="true">/</span> ECE198</span><span>Classroom prototype for participation logging.</span></footer>
-  </div>
-
+        </div>
+        <dl class="metrics">
+          <div class="metric"><dt><svg class="icon" aria-hidden="true" focusable="false"><use href="/assets/icons.svg#footprints"></use></svg> Passages</dt><dd id="countValue" aria-label="No movement count available">—</dd></div>
+          <div class="metric"><dt><svg class="icon" aria-hidden="true" focusable="false"><use href="/assets/icons.svg#timer"></use></svg> Duration</dt><dd id="durationValue">—</dd></div>
+          <div class="metric"><dt><svg class="icon" aria-hidden="true" focusable="false"><use href="/assets/icons.svg#scan-line"></use></svg> Sensor distance</dt><dd><span id="distanceValue">—</span><small id="distanceUnit" hidden> cm</small></dd></div>
+        </dl>
+        <div class="live-footer"><span class="phase-feedback"><span class="state-indicator" id="stateIndicator"></span><span id="stateTitle">Waiting for connection</span></span><span id="sessionId"></span></div>
+      </section>
+      <section class="training-panel panel" aria-labelledby="trainingTitle">
+        <div class="panel-title"><span class="section-icon"><svg class="icon" aria-hidden="true" focusable="false"><use href="/assets/icons.svg#sliders-horizontal"></use></svg></span><h2 id="trainingTitle">Session plan</h2></div>
+        <fieldset id="trainingMode" disabled>
+          <legend class="sr-only">Training mode</legend>
+          <label class="mode-row"><input type="radio" name="trainingMode" value="free" checked><span class="mode-icon"><svg class="icon" aria-hidden="true" focusable="false"><use href="/assets/icons.svg#infinity"></use></svg></span><span class="mode-copy"><strong>Free practice</strong><small>Stop when you’re ready.</small></span><span class="radio-mark"></span></label>
+          <label class="mode-row"><input type="radio" name="trainingMode" value="count"><span class="mode-icon"><svg class="icon" aria-hidden="true" focusable="false"><use href="/assets/icons.svg#target"></use></svg></span><span class="mode-copy"><strong>Count goal</strong><small>Set a number of passages.</small></span><span class="radio-mark"></span></label>
+          <label class="mode-row"><input type="radio" name="trainingMode" value="timed"><span class="mode-icon"><svg class="icon" aria-hidden="true" focusable="false"><use href="/assets/icons.svg#timer"></use></svg></span><span class="mode-copy"><strong>Timed practice</strong><small>Train for a set duration.</small></span><span class="radio-mark"></span></label>
+        </fieldset>
+        <div id="targetField" hidden><label id="targetLabel" for="trainingTarget">Target passages</label><input type="number" inputmode="numeric" id="trainingTarget" min="1" max="4294967295" step="1" value="10" required></div>
+        <div class="plan-note"><svg class="icon" aria-hidden="true" focusable="false"><use href="/assets/icons.svg#info"></use></svg><p id="modeHint">Each pass in either direction counts once.</p></div>
+        <progress id="goalProgress" aria-label="Training goal progress" hidden></progress>
+      </section>
+    </div>
+    <section id="progress" class="progress-section" aria-labelledby="trendTitle">
+      <div class="section-heading">
+        <h2 id="trendTitle">Training progress</h2>
+        <details class="filter-menu" id="filterMenu"><summary class="button button-outline"><svg class="icon" aria-hidden="true" focusable="false"><use href="/assets/icons.svg#calendar-days"></use></svg><span id="rangeLabel">All dates</span><svg class="icon" aria-hidden="true" focusable="false"><use href="/assets/icons.svg#chevron-down"></use></svg></summary>
+          <div class="date-popover"><label>From<input type="date" id="dateFrom"></label><label>To<input type="date" id="dateTo"></label><button class="text-button" type="button" id="clearDates" hidden>Clear dates</button></div>
+        </details>
+      </div>
+      <dl class="summary-grid">
+        <div class="summary-stat"><span class="stat-icon peach"><svg class="icon" aria-hidden="true" focusable="false"><use href="/assets/icons.svg#layers-2"></use></svg></span><div><dt>Saved sessions</dt><dd id="totalSessions">—</dd></div></div>
+        <div class="summary-stat"><span class="stat-icon sage"><svg class="icon" aria-hidden="true" focusable="false"><use href="/assets/icons.svg#footprints"></use></svg></span><div><dt>Total passages</dt><dd id="totalPassages">—</dd></div></div>
+        <div class="summary-stat"><span class="stat-icon lilac"><svg class="icon" aria-hidden="true" focusable="false"><use href="/assets/icons.svg#timer"></use></svg></span><div><dt>Training time</dt><dd id="totalDuration">—</dd></div></div>
+      </dl>
+      <div class="trend-panel panel">
+        <div class="trend-heading"><h3>Daily pace</h3><select id="trendProtocol" aria-label="Training mode and target for comparison" hidden></select></div>
+        <p id="trendSummary" role="status">Loading your training days…</p>
+        <figure id="paceFigure" hidden><figcaption>Passages per minute · latest training days</figcaption><div id="paceBars"></div></figure>
+        <div class="trend-scroll" id="trendTable" hidden><table><thead><tr><th scope="col">Training day</th><th scope="col">Sessions</th><th scope="col">Passages</th><th scope="col">Duration</th><th scope="col" id="goalsHeader">Goals met</th><th scope="col">Passages/min</th></tr></thead><tbody id="trendBody"></tbody></table></div>
+        <p id="trendNote" class="history-note" hidden>Pace uses sessions with a recorded duration above zero. Each session follows its local start date.</p>
+      </div>
+    </section>
+  </main>
+  <footer class="shell"><span class="footer-brand">STEPS</span><span>ECE198 · Movement counter</span></footer>
   <dialog id="recordsDialog" class="records-dialog" aria-labelledby="historyTitle">
-        <div class="section-heading"><div><p class="eyebrow">SESSION RECORDS</p><h2 id="historyTitle">Session records</h2></div><div class="history-actions"><button class="text-button" id="refreshHistoryButton" type="button" disabled><span aria-hidden="true">↻</span> Refresh</button><a class="text-button export-link" id="exportLink" href="/api/export.csv" download aria-disabled="true"><span aria-hidden="true">↓</span> Export CSV</a><button class="icon-button" id="closeRecordsButton" type="button" aria-label="Close session records">×</button></div></div>
+        <div class="section-heading"><div><h2 id="historyTitle">Session records</h2></div><div class="history-actions"><button class="text-button" id="refreshHistoryButton" type="button" disabled><svg class="icon" aria-hidden="true" focusable="false"><use href="/assets/icons.svg#refresh-cw"></use></svg> Refresh</button><a class="text-button export-link" id="exportLink" href="/api/export.csv" download aria-disabled="true"><svg class="icon" aria-hidden="true" focusable="false"><use href="/assets/icons.svg#download"></use></svg> Export CSV</a><button class="icon-button" id="closeRecordsButton" type="button" aria-label="Close session records"><svg class="icon" aria-hidden="true" focusable="false"><use href="/assets/icons.svg#x"></use></svg></button></div></div>
         <p class="history-note" id="recordRange"></p>
-        <h3 class="records-subheading">Saved sessions</h3>
+
         <div class="history-table-wrap"><table><thead><tr><th scope="col">Session</th><th scope="col">Training date</th><th scope="col">Training</th><th scope="col">Count</th><th scope="col">Duration</th><th scope="col">Record type</th><th scope="col">Saved</th></tr></thead><tbody id="historyBody"></tbody></table><div class="history-empty" id="historyEmpty"><h3>No saved sessions.</h3><p>Saved sessions appear here for the selected dates.</p></div></div>
         <p class="history-note" id="historyNote">Records describe participation. A movement count is not a measure of movement quality or clinical progress.</p>
   </dialog>
 
   <dialog id="setupDialog" class="setup-dialog" aria-labelledby="setupTitle">
-    <div class="drawer-header"><div><p class="eyebrow">CONNECTION</p><h2 id="setupTitle">Device setup</h2></div><button class="icon-button" id="closeSetupButton" type="button" aria-label="Close device setup">×</button></div>
-    <p class="drawer-intro">Connect the Arduino to your Mac with a USB data cable, then select its port.</p>
-    <label class="field-label" for="portSelect">Arduino port</label><div class="port-row"><select id="portSelect"><option value="">No Arduino ports found</option></select><button class="icon-button refresh-ports" id="refreshPortsButton" type="button" aria-label="Refresh available ports">↻</button></div>
+    <div class="drawer-header"><div><h2 id="setupTitle">Device setup</h2></div><button class="icon-button" id="closeSetupButton" type="button" aria-label="Close device setup"><svg class="icon" aria-hidden="true" focusable="false"><use href="/assets/icons.svg#x"></use></svg></button></div>
+    <p class="drawer-intro">Connect the Arduino to your computer with a USB data cable, then select its port.</p>
+    <label class="field-label" for="portSelect">Arduino port</label><div class="port-row"><select id="portSelect"><option value="">No Arduino ports found</option></select><button class="icon-button refresh-ports" id="refreshPortsButton" type="button" aria-label="Refresh available ports"><svg class="icon" aria-hidden="true" focusable="false"><use href="/assets/icons.svg#refresh-cw"></use></svg></button></div>
     <div class="connection-actions"><button class="button button-primary" id="connectButton" type="button" disabled>Connect device</button><button class="button button-outline" id="disconnectButton" type="button" disabled>Disconnect</button></div>
     <p class="setup-feedback" id="setupFeedback" aria-live="polite">Looking for available ports…</p>
     <div class="device-facts"><div><span>Device</span><strong id="deviceName">Not connected</strong></div><div><span>Firmware</span><strong id="firmwareValue">—</strong></div><div><span>Counting mode</span><strong id="modeValue">—</strong></div><div><span>Last response</span><strong id="lastResponse">—</strong></div></div>

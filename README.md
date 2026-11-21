@@ -4,9 +4,9 @@
 
 ## 在线使用
 
-打开 [STEPS 训练网站](https://sagacopilot.com/) 并用邮箱、密码注册或登录。**My progress** 可按日期查看本账号的训练记录，**Session records** 可导出 CSV。在线账号和记录保存在 Cloudflare D1，和离线演示的本机 SQLite 分开。
+打开 [STEPS 训练网站](https://sagacopilot.com/) 并用邮箱、密码注册或登录。**Progress** 可按日期查看本账号的训练记录，**Records** 可导出 CSV。在线账号和记录保存在 Cloudflare D1，和离线演示的本机 SQLite 分开。
 
-做实时训练时，在连接 Arduino 的电脑上使用支持 Web Serial 的桌面浏览器（如 Chrome 或 Edge）。关闭占用串口的本机演示服务或串口监视器，在 **Device setup → Choose USB device** 中选择开发板，然后选择训练模式并开始。保持此标签页打开，直到板端确认保存、记录同步到账号。浏览器会为网络中断时已收到的保存回执重试同步。没有 USB 的设备也可登录查看历史。
+做实时训练时，在连接 Arduino 的电脑上使用支持 Web Serial 的桌面浏览器（如 Chrome 或 Edge）。关闭占用串口的本机演示服务或串口监视器，点击 **Connect device**，在弹出的 **Device setup** 面板选择 **Choose USB device**，然后选中开发板，然后选择训练模式并开始。保持此标签页打开，直到板端确认保存、记录同步到账号。浏览器会为网络中断时已收到的保存回执重试同步。没有 USB 的设备也可登录查看历史。
 
 ## 每次演示的快速启动
 
@@ -14,8 +14,8 @@
 
 1. 接好传感器，并用 USB 数据线把 Arduino 连接到 Mac。
 2. 在项目文件夹运行 `./start-demo.command`，保留终端窗口。脚本启动本地连接程序和网页，并尝试自动识别、连接唯一的 Arduino。
-3. 首次进入网页时点击 **Create account**，用邮箱和密码注册即可开始。以后用同一账号登录。设备连接后，在 **Next session** 选训练模式并点击 **Start session**。
-4. 自由练习结束时点击 **Stop & save**。目标次数和限时练习会在电脑收到达标读数后自动停止，也可以提前结束。在 **My progress** 查看每日变化，点 **Session records** 查看每一场。
+3. 首次进入网页时点击 **Create account**，用邮箱和密码注册即可开始。以后用同一账号登录。设备连接后，在 **Session plan** 选训练模式并点击 **Start session**。
+4. 自由练习结束时点击 **Stop & save**。目标次数和限时练习会在电脑收到达标读数后自动停止，也可以提前结束。在 **Progress** 查看每日变化，点 **Records** 查看每一场。
 
 **日常演示不用打开 Arduino IDE，也不用手动输入任何串口命令。** Arduino 中已上传的程序随 USB 供电运行，网页按钮负责开始、停止本场计数；按钮不会重新上传固件。首次安装与详细操作见下文。
 
@@ -93,7 +93,7 @@ cd ece198-motion-counter
 
 程序会尝试自动连接唯一检测到的 Arduino。若网页尚未连接，打开 **Device setup**，选择 Arduino 的 USB 端口并点击 **Connect device**。确认设备已连接、状态正在更新后再开始演示。这个网页通过本机 Python 程序访问 USB，不需要另开一个前端服务。
 
-主页集中显示计数、持续时间和距离，按钮下方显示当前检测状态。顶部 **Session records** 打开记录窗口，其中 **Refresh** 更新历史，**Export CSV** 导出记录。
+主页集中显示计数、持续时间和距离，按钮下方显示当前检测状态。顶部 **Records** 打开记录窗口，其中 **Refresh** 更新历史，**Export CSV** 导出记录。
 
 若启动脚本提示没有执行权限，在项目目录中运行 `chmod +x start-demo.command` 后重试。
 
@@ -122,7 +122,7 @@ python3 -m venv .venv
 2. 让物体缓慢穿过传感器前方 **2–25 cm** 的区域。连续三次有效读数进入该范围后，次数加 1。
 3. 物体停在前面时，网页显示 **Pass counted · move fully away**（固件状态 `OCCUPIED`），次数保持不变。
 4. 完全移出探测区域，或移远到 **35 cm 及以上**，保持至少 **0.3 秒**，等到再次显示 **Ready for your next pass** 后再经过。
-5. 点击 **Stop & save**。确认设备已保存本场摘要，再点击顶部 **Session records** 打开记录窗口；需要时使用其中的 **Refresh** 或 **Export CSV**。
+5. 点击 **Stop & save**。确认设备已保存本场摘要，再点击顶部 **Records** 打开记录窗口；需要时使用其中的 **Refresh** 或 **Export CSV**。
 
 **每次反向经过之前也要留出清空时间。** 太快的挥动可能不足三次采样，太快反向且没有清空间隔也不会算成第二次。25–35 cm 中间区域不算进入，也不能完成清空；小于 2 cm 的读数不参与计数或清空。
 

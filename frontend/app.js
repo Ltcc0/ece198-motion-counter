@@ -1,6 +1,6 @@
 'use strict';
 
-// This interface only displays the local server's real device data.
+// Both transports feed the same session view.
 const $ = (id) => document.getElementById(id);
 const ui = Object.fromEntries([
   'connectionPill','connectionLabel','setupButton','setupDialog','closeSetupButton',
@@ -12,7 +12,8 @@ const ui = Object.fromEntries([
   'disconnectButton','setupFeedback','deviceName','firmwareValue','modeValue','lastResponse',
   'trainingTitle','accountEmail','logoutButton','dateFrom','dateTo','clearDates','recordRange',
   'trainingMode','targetField','targetLabel','trainingTarget','goalProgress','modeHint',
-  'trendProtocol','trendTable','trendBody','trendSummary','trendNote','goalsHeader'
+  'trendProtocol','trendTable','trendBody','trendSummary','trendNote','goalsHeader',
+  'heroConnect','liveTitle','totalSessions','totalPassages','totalDuration','rangeLabel','paceFigure','paceBars'
 ].map((id) => [id, $(id)]));
 
 let leavingDashboard = false;
@@ -112,11 +113,17 @@ function render() {
   ui.distanceValue.textContent = fresh && validDistance ? distance.toFixed(1) : fresh && /NO.?ECHO|NO.?TARGET|CLEAR|TOO_FAR/.test(sensor) ? 'Clear' : fresh && sensor === 'TOO_CLOSE' ? 'Too close' : '—';
   ui.distanceUnit.hidden = !fresh || !validDistance;
   ui.sessionEyebrow.textContent = running && fresh ? 'LIVE SESSION' : count !== null && !running ? 'SESSION SUMMARY' : 'LIVE SESSION';
+  ui.liveTitle.textContent = running ? 'Session in progress' : count !== null && d.session_id ? 'Session summary' : 'Movement counter';
+  ui.liveTitle.closest('.session-card').dataset.running = String(running && fresh);
+  ui.heroConnect.hidden = connected;
+  ui.heroConnect.disabled = !apiAvailable || Boolean(state?.device_busy);
+  ui.startButton.hidden = !connected || running;
+  ui.stopButton.hidden = !connected || !running;
   const id = d.session_id;
-  ui.sessionId.textContent = id !== null && id !== undefined ? `Session ${String(id).padStart(3,'0')}` : running ? 'Session in progress' : 'Ready when you are';
+  ui.sessionId.textContent = id !== null && id !== undefined ? `Session ${String(id).padStart(3,'0')}` : running ? 'Session in progress' : '';
 
   let view = {state:'disconnected',title:'Waiting for connection'};
-  if (!apiAvailable) view = {state:'disconnected',title:'Local server unavailable'};
+  if (!apiAvailable) view = {state:'disconnected',title:'Server unavailable'};
   else if (connected && stale) view = {state:'stale',title:'Waiting for a fresh reading'};
   else if (connected && !fresh) view = {state:'disconnected',title:'Waiting for the Arduino'};
   else if (fresh && knownMode && !supportsPassage) view = {state:'stopped',title:'Different counting mode — passage firmware required'};
@@ -131,7 +138,7 @@ function render() {
   ui.stateTitle.textContent = view.title;
 
   renderTraining(running);
-  const validTarget = ui.trainingMode.value === 'free' || ui.trainingTarget.validity.valid;
+  const validTarget = selectedMode() === 'free' || ui.trainingTarget.validity.valid;
   ui.startButton.disabled = !fresh || pending || running || !supportsPassage || !state?.account || !validTarget;
   ui.stopButton.disabled = !fresh || pending || !running;
   ui.refreshHistoryButton.disabled = !fresh || pending || running;
@@ -157,7 +164,7 @@ function render() {
   else if (state?.storage_error) applyMessage(ui.actionFeedback, state.storage_error, 'error');
   else if (pending) applyMessage(ui.actionFeedback, awaitingCommand?.command === 'STOP' ? 'Waiting for the Arduino to stop and confirm the save…' : awaitingCommand?.command === 'START' ? 'Waiting for the Arduino to start…' : 'Waiting for the device response…');
   else if (msg) applyMessage(ui.actionFeedback,msg.text,msg.kind);
-  else if (!apiAvailable) applyMessage(ui.actionFeedback,'The local server is unavailable. Live controls are paused.','error');
+  else if (!apiAvailable) applyMessage(ui.actionFeedback,'Connection lost. Live controls are paused.','error');
   else if (!connected) applyMessage(ui.actionFeedback,'Connect your Arduino to begin.');
   else if (!fresh) applyMessage(ui.actionFeedback,'Waiting for a fresh device reading.');
   else if (!supportsPassage) applyMessage(ui.actionFeedback,'Waiting for passage-mode firmware identification.');
@@ -171,7 +178,7 @@ function render() {
   ui.lastResponse.textContent = received === null ? '—' : `${Math.max(0,Math.floor(Date.now()/1000-received))} seconds ago`;
   const setupMsg = currentMessage(setupFeedback);
   if (setupMsg) applyMessage(ui.setupFeedback,setupMsg.text,setupMsg.kind);
-  else if (!apiAvailable) applyMessage(ui.setupFeedback,'Cannot reach the local server. Check that it is running.','error');
+  else if (!apiAvailable) applyMessage(ui.setupFeedback,'Unable to reach the server. Check your connection.','error');
   else if (c.error) applyMessage(ui.setupFeedback,String(c.error),'error');
   else if (connected) applyMessage(ui.setupFeedback,stale?'The connection is open, but readings are not arriving.':fresh?'Your Arduino is connected and sending readings.':'Port opened. Waiting for the Arduino to respond.');
   else if (usb) applyMessage(ui.setupFeedback, navigator.serial ? 'Choose your Arduino and allow USB access in the browser.' : 'Use desktop Chrome or Edge to connect USB. Your training records are available here.');
@@ -237,19 +244,23 @@ function protocolText(item) {
   return label + ' · ' + item.target + (item.training_mode === 'count' ? ' passages' : ' seconds');
 }
 
+const trainingModes = [...ui.trainingMode.querySelectorAll('input[type=radio]')];
+function selectedMode() { return trainingModes.find(input => input.checked).value; }
+
 function renderTraining(running) {
   ui.accountEmail.textContent = state?.account?.email || '';
   const plan = state?.active_training;
   if (plan) {
-    ui.trainingMode.value = plan.training_mode;
+    const option = trainingModes.find(input => input.value === plan.training_mode);
+    if (option) option.checked = true;
     if (plan.target != null) ui.trainingTarget.value = plan.target;
   }
   const locked = running || Boolean(plan) || busy();
-  ui.trainingTitle.textContent = plan ? 'Active session' : 'Next session';
+  ui.trainingTitle.textContent = plan ? 'Active plan' : 'Session plan';
   for (const control of [ui.trainingMode, ui.trainingTarget]) {
     control.disabled = locked || !apiAvailable;
   }
-  const mode = ui.trainingMode.value;
+  const mode = selectedMode();
   const timed = mode === 'timed';
   ui.targetField.hidden = mode === 'free';
   ui.targetLabel.textContent = timed ? 'Time limit (seconds)' : 'Target passages';
@@ -262,8 +273,8 @@ function renderTraining(running) {
       ? secondsText(Math.max(0, plan.target - value)) + ' remaining'
       : value + ' of ' + plan.target + ' passages';
   } else {
-    ui.modeHint.textContent = mode === 'free' ? 'Choose Stop & save whenever you finish.'
-      : 'Stop & save is sent when the board reaches your ' + (timed ? 'time limit.' : 'passage target.');
+    ui.modeHint.textContent = mode === 'free' ? 'Each pass in either direction counts once.'
+      : 'Your session saves automatically at the ' + (timed ? 'time limit.' : 'passage target.');
   }
 }
 
@@ -278,7 +289,7 @@ function renderTrend() {
   const reports = recordData.reports;
   ui.trendProtocol.hidden = reports.length === 0;
   const report = reports.find(r => protocolText(r) === ui.trendProtocol.value);
-  ui.trendTable.hidden = ui.trendNote.hidden = !report;
+  ui.trendTable.hidden = ui.trendNote.hidden = ui.paceFigure.hidden = !report;
   ui.trendBody.replaceChildren();
   if (!report) {
     ui.trendSummary.textContent = ui.dateFrom.value || ui.dateTo.value
@@ -300,30 +311,41 @@ function renderTrend() {
   }
   const hasGoal = report.target !== null;
   ui.goalsHeader.hidden = !hasGoal;
-  const peak = report.days.reduce((max, day) => Math.max(max, day.pace || 0), 0);
+  const recent = report.days.slice(-7);
+  const peak = Math.max(...recent.map(day => day.pace || 0));
+  ui.paceBars.replaceChildren(...recent.map(day => {
+    const column = document.createElement('div');
+    column.className = 'pace-column';
+    const value = document.createElement('strong');
+    value.textContent = day.pace === null ? '—' : day.pace.toFixed(1);
+    const bar = document.createElement('i');
+    bar.setAttribute('aria-hidden', 'true');
+    bar.style.height = (peak ? (day.pace || 0) / peak * 100 : 0) + '%';
+    const label = document.createElement('small');
+    label.textContent = new Intl.DateTimeFormat('en', {month:'short',day:'numeric',timeZone:'UTC'})
+      .format(new Date(day.day + 'T00:00:00Z'));
+    column.title = day.day + (day.pace === null ? ' · No recorded pace' : ' · ' + value.textContent + ' passages/min');
+    column.append(value, bar, label);
+    return column;
+  }));
   for (const day of [...report.days].reverse()) {
     const tr = ui.trendBody.insertRow();
     cell(tr, day.day); cell(tr, day.sessions); cell(tr, day.count); cell(tr, secondsText(day.seconds));
     if (hasGoal) cell(tr, day.goals_met + '/' + day.sessions);
-    const pace = cell(tr, day.pace === null ? '—' : day.pace.toFixed(1));
-    if (day.pace !== null) {
-      const track = document.createElement('span');
-      track.className = 'pace-track';
-      track.setAttribute('aria-hidden', 'true');
-      const bar = document.createElement('span');
-      bar.className = 'pace-bar';
-      bar.style.width = (peak ? day.pace / peak * 100 : 0) + '%';
-      track.append(bar);
-      pace.prepend(track);
-    }
+    cell(tr, day.pace === null ? '—' : day.pace.toFixed(1));
   }
 }
 
-function displayRecords() {
+function displayRecords(loaded = true) {
   const rows = recordData.history;
+  const seconds = rows.reduce((sum, row) => sum + (row.seconds || 0), 0);
+  ui.totalSessions.textContent = loaded ? rows.length.toLocaleString() : '—';
+  ui.totalPassages.textContent = loaded ? rows.reduce((sum, row) => sum + (row.count || 0), 0).toLocaleString() : '—';
+  ui.totalDuration.textContent = loaded ? secondsText(seconds) : '—';
   ui.exportLink.href = '/api/export.csv?' + recordQuery();
   const from = ui.dateFrom.value;
   const to = ui.dateTo.value;
+  ui.rangeLabel.textContent = from || to ? 'Filtered dates' : 'All dates';
   ui.recordRange.textContent = [from && 'From ' + from, to && 'Through ' + to].filter(Boolean).join(' · ') || 'All training dates';
   ui.exportLink.setAttribute('aria-disabled', String(!rows.length || !apiAvailable));
   ui.exportLink.tabIndex = rows.length && apiAvailable ? 0 : -1;
@@ -362,7 +384,7 @@ async function renderHistory() {
   historySignature = signature;
   const request = ++recordRequest;
   recordData = {history: [], reports: []};
-  displayRecords();
+  displayRecords(false);
   ui.historyEmpty.hidden = true;
   if (ui.dateFrom.value && ui.dateTo.value && ui.dateFrom.value > ui.dateTo.value) {
     ui.trendSummary.textContent = 'Choose an end date on or after the start date.';
@@ -468,19 +490,19 @@ async function sendCommand(command) {
   mutationInFlight=true;awaitingCommand={command,started:Date.now(),received:number(state?.connection?.last_received_at)??0,sessionId:state?.device?.session_id??null};render();
   const body = {command};
   if (command === 'START') {
-    body.training = {training_mode: ui.trainingMode.value,
-      target: ui.trainingMode.value === 'free' ? null : ui.trainingTarget.valueAsNumber};
+    body.training = {training_mode: selectedMode(),
+      target: selectedMode() === 'free' ? null : ui.trainingTarget.valueAsNumber};
   }
   try{if (usb) await usb.command(command, body.training); else await post('/api/command',body);}
   catch(error){awaitingCommand=null;flashMessage(error.name==='AbortError'?'The device request timed out. Check the connection.':error.message,'error',false,10000);}
   finally{mutationInFlight=false;await requestState();render();}
 }
 ui.trainingMode.addEventListener('change', () => {
-  if (ui.trainingMode.value !== 'free') ui.trainingTarget.value = targets[ui.trainingMode.value];
+  if (selectedMode() !== 'free') ui.trainingTarget.value = targets[selectedMode()];
   render();
 });
 ui.trainingTarget.addEventListener('input', () => {
-  targets[ui.trainingMode.value] = ui.trainingTarget.value;
+  targets[selectedMode()] = ui.trainingTarget.value;
   render();
 });
 ui.logoutButton.addEventListener('click', async () => {
@@ -509,7 +531,9 @@ ui.refreshHistoryButton.addEventListener('click',()=>{
   nextCloudCheck=0; historySignature=''; requestState();
 });
 ui.exportLink.addEventListener('click',(event)=>{if(ui.exportLink.getAttribute('aria-disabled')==='true')event.preventDefault();});
-ui.setupButton.addEventListener('click',()=>{ui.setupDialog.showModal();requestState();});
+for (const trigger of [ui.setupButton, ui.heroConnect]) {
+  trigger.addEventListener('click', () => { ui.setupDialog.showModal(); requestState(); });
+}
 ui.closeSetupButton.addEventListener('click',()=>ui.setupDialog.close());
 ui.recordsButton.addEventListener('click',()=>{
   historySignature = '';
@@ -543,14 +567,42 @@ ui.disconnectButton.addEventListener('click',async()=>{
   catch(error){flashMessage(error.message,'error',true);}
   finally{mutationInFlight=false;await requestState();render();}
 });
+function setPresentation(active) {
+  currentPresentation = active;
+  document.body.classList.toggle('presentation-mode', active);
+  ui.presentationButton.setAttribute('aria-pressed', String(active));
+  ui.presentationLabel.textContent = active ? 'Exit presentation' : 'Presentation mode';
+}
+document.addEventListener('fullscreenchange', () => setPresentation(Boolean(document.fullscreenElement)));
 ui.presentationButton.addEventListener('click',()=>{
-  currentPresentation=!currentPresentation;
-  document.body.classList.toggle('presentation-mode',currentPresentation);
-  ui.presentationButton.setAttribute('aria-pressed',String(currentPresentation));
-  ui.presentationLabel.textContent=currentPresentation?'Exit presentation':'Presentation mode';
+  setPresentation(!currentPresentation);
   // Fullscreen is requested only within this explicit user gesture.
   if(currentPresentation&&document.documentElement.requestFullscreen){document.documentElement.requestFullscreen().catch(()=>{});}
   else if(!currentPresentation&&document.fullscreenElement&&document.exitFullscreen){document.exitFullscreen().catch(()=>{});}
 });
+const studioDate = $('studioDate');
+function updateStudioDate() {
+  const today = new Date();
+  studioDate.textContent = today.toLocaleDateString('en-US', {weekday:'long', month:'long', day:'numeric'});
+  studioDate.dateTime = [today.getFullYear(), String(today.getMonth()+1).padStart(2,'0'), String(today.getDate()).padStart(2,'0')].join('-');
+}
+updateStudioDate();
+document.addEventListener('visibilitychange', () => { if (!document.hidden) updateStudioDate(); });
+const progressNav = $('progressNav'), studioNav = $('studioNav');
+function setNav() {
+  const onProgress = location.hash === '#progress';
+  const active = onProgress ? progressNav : studioNav;
+  const inactive = onProgress ? studioNav : progressNav;
+  active.setAttribute('aria-current', 'location');
+  inactive.removeAttribute('aria-current');
+}
+setNav();
+window.addEventListener('hashchange', setNav);
+for (const menu of [$('accountMenu'), $('filterMenu')]) {
+  document.addEventListener('click', event => { if (!menu.contains(event.target)) menu.open = false; });
+  menu.addEventListener('keydown', event => {
+    if (event.key === 'Escape') { menu.open = false; menu.querySelector('summary').focus(); }
+  });
+}
 async function poll(){await requestState();if (!leavingDashboard) setTimeout(poll,450);}
 poll();

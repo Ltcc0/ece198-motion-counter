@@ -21,7 +21,7 @@ The dashboard and USB bridge run together on the Mac. The embedded program alrea
 
 For a count goal or a timed session, choose the mode and enter the target before starting. Keep the bridge connected until the board confirms the save. The bridge requests STOP at the first reported count or elapsed time that reaches the target. You can stop early.
 
-The main page contains the counter, duration and live distance, with phase feedback beneath the session controls. **Session records** in the header opens a separate dialog containing **Refresh** and **Export CSV**. **Device setup** opens the connection drawer.
+The main page contains the counter, duration and live distance, with phase feedback beneath the session controls. **Records** in the header opens a separate dialog containing **Refresh** and **Export CSV**. The device-status button in the header opens **Device setup**.
 
 ## Short presentation script
 
@@ -41,7 +41,7 @@ The main page contains the counter, duration and live distance, with phase feedb
 | Move it fully out and wait for **Ready for your next pass** again. | “The area must remain clear for at least 0.3 seconds before another passage.” |
 | Repeat until five deliberate passages have been made. | Compare the displayed number with the manual count. If they differ, report the observed result rather than assuming the target was achieved. |
 | Click **Stop & save** and confirm the saved summary. | “The Arduino stores the session number, count and elapsed time in its local memory.” |
-| Click the header's **Session records** button. Use **Refresh** or **Export CSV** in that dialog if useful. | “Open My progress and select the goal and date range to compare your daily pace. The CSV includes your sessions in that range.” |
+| Click the header's **Records** button. Use **Refresh** or **Export CSV** in that dialog if useful. | “Open Progress and select the goal and date range to compare your daily pace. The CSV includes your sessions in that range.” |
 
 After presenting, confirm the session was saved, then press **Control+C** in the server's Terminal window.
 
