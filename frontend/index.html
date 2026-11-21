@@ -8,7 +8,7 @@
   <link rel="icon" href="/assets/mark.svg" type="image/svg+xml">
   <link rel="preload" href="/assets/barlow-condensed-bold.ttf" as="font" type="font/ttf" crossorigin>
   <link rel="stylesheet" href="/styles.css">
-  <script src="/app.js" defer></script>
+  <script src="/app.js" type="module"></script>
 </head>
 <body>
   <a class="skip-link" href="#studio">Skip to training</a>
@@ -83,6 +83,23 @@
         <div class="summary-stat"><span class="stat-icon sage"><svg class="icon" aria-hidden="true" focusable="false"><use href="/assets/icons.svg#footprints"></use></svg></span><div><dt>Total passages</dt><dd id="totalPassages">—</dd></div></div>
         <div class="summary-stat"><span class="stat-icon lilac"><svg class="icon" aria-hidden="true" focusable="false"><use href="/assets/icons.svg#timer"></use></svg></span><div><dt>Training time</dt><dd id="totalDuration">—</dd></div></div>
       </dl>
+      <section id="analysisPanel" class="trend-panel panel" aria-labelledby="analysisTitle" hidden>
+        <div class="trend-heading">
+          <h3 id="analysisTitle">AI training review</h3>
+          <button class="button button-primary" type="button" id="analyzeButton" aria-describedby="analysisDisclosure" disabled>Analyze with DeepSeek</button>
+        </div>
+        <p class="history-note" id="analysisDisclosure">On click, DeepSeek receives daily training totals across all modes in your selected dates. Your email and device details stay private.</p>
+        <p id="analysisStatus" role="status"></p>
+        <div id="analysisResult" hidden>
+          <div class="trend-scroll"><table aria-label="Measured change across training days">
+            <thead><tr><th scope="col">Training day</th><th scope="col">Passages</th><th scope="col">Duration</th><th scope="col">Passages/min</th></tr></thead>
+            <tbody id="analysisMetrics"></tbody>
+          </table></div>
+          <h4>What changed</h4><p id="analysisObservations"></p>
+          <h4>Next session</h4><p id="analysisPlan"></p>
+          <h4>Training tip</h4><p id="analysisTip"></p>
+        </div>
+      </section>
       <div class="trend-panel panel">
         <div class="trend-heading"><h3>Daily pace</h3><select id="trendProtocol" aria-label="Training mode and target for comparison" hidden></select></div>
         <p id="trendSummary" role="status">Loading your training days…</p>

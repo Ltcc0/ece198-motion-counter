@@ -1,4 +1,4 @@
-'use strict';
+import {createTrainingReview} from './progress-analysis.js';
 
 // Both transports feed the same session view.
 const $ = (id) => document.getElementById(id);
@@ -15,6 +15,21 @@ const ui = Object.fromEntries([
   'trendProtocol','trendTable','trendBody','trendSummary','trendNote','goalsHeader',
   'heroConnect','liveTitle','totalSessions','totalPassages','totalDuration','rangeLabel','paceFigure','paceBars'
 ].map((id) => [id, $(id)]));
+
+const trainingReview = createTrainingReview(secondsText, showLogin);
+
+function refreshTrainingReview() {
+  trainingReview.update({
+    hosted: state?.transport === 'web-serial',
+    configured: state?.analysis_available,
+    online: apiAvailable,
+    accountId: state?.account?.id,
+    revision: state?.archive_revision,
+    from: ui.dateFrom.value,
+    to: ui.dateTo.value,
+    hasRecords: recordData.history.length > 0
+  });
+}
 
 let leavingDashboard = false;
 function showLogin() {
@@ -186,6 +201,7 @@ function render() {
   else applyMessage(ui.setupFeedback,'Select your Arduino’s USB port and choose Connect device.');
 
   renderHistory();
+  refreshTrainingReview();
 }
 
 function renderPorts() {
@@ -364,6 +380,7 @@ function displayRecords(loaded = true) {
   ui.trendProtocol.replaceChildren(...recordData.reports.map(r => new Option(protocolText(r), protocolText(r))));
   if (recordData.reports.some(r => protocolText(r) === protocolKey)) ui.trendProtocol.value = protocolKey;
   renderTrend();
+  refreshTrainingReview();
 }
 
 function recordQuery() {

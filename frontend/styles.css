@@ -274,3 +274,11 @@ dialog::backdrop { background: #22251ed0; opacity: .65; }
 @media(prefers-reduced-motion: no-preference) {
   button, summary, .mode-row { transition: background-color .15s, border-color .15s; }
 }
+
+#analysisPanel .trend-heading { flex-wrap: wrap; }
+#analysisStatus { color: var(--muted); font-size: .9rem; }
+#analysisStatus:not(:empty) { margin-top: 10px; }
+#analysisResult { margin-top: 15px; }
+#analysisResult h4 { margin: 16px 0 3px; font-size: .95rem; }
+#analysisResult p { max-width: 76ch; }
+#analysisMetrics th { position: static; background: transparent; }

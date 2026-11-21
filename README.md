@@ -48,6 +48,16 @@ Under **Daily pace**, select a mode and target to compare your first day with a 
 
 For example, if you complete one 60-second timed session on each of two days and record 8 and 10 passages, your pace changes from 8 to 10 passages per minute, an increase of 2. Use the same movement and sensor position when comparing days. These readings describe participation and pace. Assessing movement quality, overall motor ability, or rehabilitation outcomes requires additional evidence.
 
+### One-click AI training review
+
+On the hosted site, open **Progress**, choose a date range, and click **Analyze with DeepSeek**. The review covers all training modes in that range. The mode and target selector under **Daily pace** applies only to that chart.
+
+The Worker calculates daily passages, total training time, and weighted passages per minute from the signed-in account’s records. The results show the first and last training days and their measured differences. DeepSeek explains the changes, suggests one next session within the user’s existing exercise plan, and offers a practical tip for making the next comparison useful. A single training day establishes a baseline. If a day has no recorded duration, its pace and any change that depends on it appear as a dash.
+
+Analysis runs only when someone presses the button. DeepSeek receives training dates, daily session counts by mode, passages, duration, and pace. Account IDs, email addresses, device details, and individual session records stay with STEPS. Every training day in the range contributes. For ranges above 90 training days, the first and latest 89 days are sent individually and the intervening days are grouped by calendar month, with weighted pace calculated from their timed passages and seconds. Reviews are displayed in the browser and are not saved to D1. Changing dates or saving a new session clears the previous review.
+
+The local Python demo keeps its records offline. To use AI analysis, sign in to the hosted studio with an account that has saved training there.
+
 ## Get the project
 
 Clone the [GitHub repository](https://github.com/Ltcc0/ece198-motion-counter) and enter the project directory.
@@ -170,3 +180,21 @@ npx wrangler d1 migrations apply ece198-motion-training --remote
 ```
 
 Set a random value for the Worker secret `PASSWORD_PEPPER`, then run `npx wrangler deploy`. Keep the same secret when updating an existing instance so existing accounts can continue to sign in.
+
+### Enable DeepSeek
+
+Create an API key in the [DeepSeek Platform](https://platform.deepseek.com/api_keys) with an account that has available API credit. From the repository root, run the following command and paste the key at Wrangler’s hidden prompt.
+
+```sh
+npx wrangler secret put ai-analysis
+```
+
+You can also set `ai-analysis` as a **Secret** in the Worker’s **Settings → Variables and Secrets**. The value belongs only in the Worker secret store. The browser calls the authenticated `POST /api/progress/analysis` endpoint. The Worker uses the [DeepSeek chat API](https://api-docs.deepseek.com/) with `deepseek-flash`. Each successful review uses the operator’s DeepSeek API credit.
+
+When the secret is missing, the hosted page shows that AI analysis is awaiting activation. Empty date ranges skip the provider call. The Worker limits analysis to four requests per minute per account and per source IP at each Cloudflare location. Provider credential, billing, capacity, and timeout errors appear in the review panel without exposing provider responses or the key.
+
+Run the AI endpoint regression tests with Node.js 24 or later. They use an isolated SQLite database and a simulated provider.
+
+```sh
+node --test tests/training-analysis.test.mjs
+```

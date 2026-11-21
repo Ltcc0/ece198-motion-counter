@@ -1,16 +1,11 @@
+import {HttpError, json} from './http.js';
+import {analyzeTraining} from './training-analysis.js';
+
 const WEEK = 7 * 86400;
 const COOKIE = '__Host-steps_session';
 const encoder = new TextEncoder();
 const hex = bytes => Array.from(new Uint8Array(bytes), n => n.toString(16).padStart(2, '0')).join('');
 const now = () => Math.floor(Date.now() / 1000);
-
-class HttpError extends Error {
-  constructor(status, message) { super(message); this.status = status; }
-}
-
-function json(value, status = 200, headers = {}) {
-  return Response.json(value, {status, headers: {'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', ...headers}});
-}
 
 function cookie(value, age) {
   return `${COOKIE}=${value}; Max-Age=${age}; Path=/; Secure; HttpOnly; SameSite=Strict`;
@@ -179,6 +174,9 @@ async function dispatch(request, env) {
     await env.DB.prepare('DELETE FROM logins WHERE digest=?').bind(digest).run();
     return json({ok:true}, 200, {'Set-Cookie':cookie('', 0)});
   }
+  if (request.method === 'POST' && path === '/api/progress/analysis') {
+    return json(await analyzeTraining(env, account.id, dates(url.searchParams), request.headers.get('CF-Connecting-IP')));
+  }
   if (request.method === 'POST' && path === '/api/sessions') {
     const values = capture(data);
     await env.DB.prepare('INSERT INTO sessions(user_id,capture_key,device_id,id,training_mode,target,count,seconds,started_at,saved_at,training_day) VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(user_id,capture_key) DO NOTHING')
@@ -187,7 +185,7 @@ async function dispatch(request, env) {
   }
   if (request.method === 'GET' && path === '/api/state') {
     const revision = await env.DB.prepare('SELECT coalesce(max(row_id),0) AS n FROM sessions WHERE user_id=?').bind(account.id).first('n');
-    return json({account, transport:'web-serial', archive_revision:revision});
+    return json({account, transport:'web-serial', archive_revision:revision, analysis_available:Boolean(env['ai-analysis'])});
   }
   if (request.method === 'GET' && ['/api/records','/api/export.csv'].includes(path)) {
     const rows = await env.DB.prepare("SELECT id,device_id,user_id,count,seconds,started_at,saved_at,training_day,training_mode,target,'PASSAGE' AS mode,'board' AS source FROM sessions WHERE user_id=? AND training_day BETWEEN ? AND ? ORDER BY started_at DESC,row_id DESC")
