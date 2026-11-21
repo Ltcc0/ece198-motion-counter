@@ -10,6 +10,15 @@ For live training, connect the Arduino to the computer running a desktop browser
 
 Keep the tab open until the board confirms the save and the session syncs to your account. If the network drops after the browser receives the board’s save confirmation, the browser retries the upload. You can review your history on another device without connecting an Arduino.
 
+## Training studio screenshots
+
+Both views show the same six demo sessions. Select either screenshot to see it at full size.
+
+<p>
+  <a href="docs/screenshots/training-studio-desktop.png"><img src="docs/screenshots/training-studio-desktop.png" alt="Desktop training studio with the movement counter beside the session plan and a daily pace chart below" width="590" align="top"></a>
+  <a href="docs/screenshots/training-studio-mobile.png"><img src="docs/screenshots/training-studio-mobile.png" alt="Mobile training studio with the counter, training modes, progress totals, and daily history in a single column" width="136" align="top"></a>
+</p>
+
 ## Quick start for a local demo
 
 Once you have [uploaded the firmware](#2-upload-the-firmware), use these steps for each demo.
