@@ -23,6 +23,9 @@ function showLogin() {
 }
 
 let state = null;
+let usb = null;
+let cloudState = null;
+let nextCloudCheck = 0;
 let apiAvailable = false;
 let fetchInFlight = null;
 let mutationInFlight = false;
@@ -133,7 +136,14 @@ function render() {
   ui.stopButton.disabled = !fresh || pending || !running;
   ui.refreshHistoryButton.disabled = !fresh || pending || running;
   ui.refreshPortsButton.disabled = mutationInFlight;
-  ui.connectButton.disabled = !apiAvailable || pending || connected || !ui.portSelect.value;
+  ui.connectButton.disabled = !apiAvailable || pending || connected || (usb ? !navigator.serial : !ui.portSelect.value);
+  if (usb) {
+    ui.refreshHistoryButton.disabled = !apiAvailable;
+    ui.portSelect.closest('.port-row').hidden = true;
+    document.querySelector('label[for="portSelect"]').hidden = true;
+    ui.connectButton.textContent = 'Choose USB device';
+    document.querySelector('.drawer-intro').textContent = 'Connect the Arduino to this computer, then choose its USB port in the browser.';
+  }
   ui.disconnectButton.disabled = !apiAvailable || mutationInFlight || !c.connected;
   ui.portSelect.disabled = Boolean(c.connected) || mutationInFlight;
   ui.startButton.setAttribute('aria-busy', String(awaitingCommand?.command === 'START'));
@@ -164,6 +174,7 @@ function render() {
   else if (!apiAvailable) applyMessage(ui.setupFeedback,'Cannot reach the local server. Check that it is running.','error');
   else if (c.error) applyMessage(ui.setupFeedback,String(c.error),'error');
   else if (connected) applyMessage(ui.setupFeedback,stale?'The connection is open, but readings are not arriving.':fresh?'Your Arduino is connected and sending readings.':'Port opened. Waiting for the Arduino to respond.');
+  else if (usb) applyMessage(ui.setupFeedback, navigator.serial ? 'Choose your Arduino and allow USB access in the browser.' : 'Use desktop Chrome or Edge to connect USB. Your training records are available here.');
   else if (!(state?.ports || []).length) applyMessage(ui.setupFeedback,'No ports found. Connect the Arduino, then refresh the list.');
   else applyMessage(ui.setupFeedback,'Select your Arduino’s USB port and choose Connect device.');
 
@@ -252,7 +263,7 @@ function renderTraining(running) {
       : value + ' of ' + plan.target + ' passages';
   } else {
     ui.modeHint.textContent = mode === 'free' ? 'Choose Stop & save whenever you finish.'
-      : 'The Mac sends Stop & save when the board reaches your ' + (timed ? 'time limit.' : 'passage target.');
+      : 'Stop & save is sent when the board reaches your ' + (timed ? 'time limit.' : 'passage target.');
   }
 }
 
@@ -409,10 +420,22 @@ async function requestState() {
   fetchInFlight=(async()=>{
     const controller=new AbortController();const timeout=setTimeout(()=>controller.abort(),4000);
     try{
-      const response=await fetch('/api/state?live=1',{cache:'no-store',signal:controller.signal});
-      if(response.status===401){showLogin();return;}
-      if(!response.ok)throw new Error(`Server returned ${response.status}`);
-      const next=await response.json();
+      let next = cloudState;
+      if (!usb || !cloudState || Date.now() >= nextCloudCheck) {
+        const response=await fetch('/api/state?live=1',{cache:'no-store',signal:controller.signal});
+        if(response.status===401){showLogin();return;}
+        if(!response.ok)throw new Error(`Server returned ${response.status}`);
+        next=await response.json();
+        if (next.transport === 'web-serial') {
+          if (!usb) {
+            const {UsbTraining} = await import('/usb-training.js');
+            usb = new UsbTraining(next.account, () => {nextCloudCheck=0;historySignature='';});
+          }
+          cloudState = next;
+          nextCloudCheck = Date.now() + 30000;
+        }
+      }
+      if (usb) next = {...next,...usb.snapshot()};
       if(!next||typeof next!=='object'||!next.connection)throw new Error('Invalid server response');
       if (state?.account && state.account.id !== next.account.id) { location.reload(); return; }
       const previousPlan = state?.active_training;
@@ -427,8 +450,8 @@ async function requestState() {
       }
       state=next;apiAvailable=true;renderPorts();settleCommand();render();
     }catch(error){apiAvailable=false;render();}
-    finally{clearTimeout(timeout);fetchInFlight=null;}
-  })();
+    finally{clearTimeout(timeout);}
+  })().finally(() => {fetchInFlight=null;});
   return fetchInFlight;
 }
 async function post(path,body={}) {
@@ -448,7 +471,7 @@ async function sendCommand(command) {
     body.training = {training_mode: ui.trainingMode.value,
       target: ui.trainingMode.value === 'free' ? null : ui.trainingTarget.valueAsNumber};
   }
-  try{await post('/api/command',body);}
+  try{if (usb) await usb.command(command, body.training); else await post('/api/command',body);}
   catch(error){awaitingCommand=null;flashMessage(error.name==='AbortError'?'The device request timed out. Check the connection.':error.message,'error',false,10000);}
   finally{mutationInFlight=false;await requestState();render();}
 }
@@ -481,7 +504,10 @@ ui.trendProtocol.addEventListener('change', () => { protocolKey = ui.trendProtoc
 
 ui.startButton.addEventListener('click',()=>sendCommand('START'));
 ui.stopButton.addEventListener('click',()=>sendCommand('STOP'));
-ui.refreshHistoryButton.addEventListener('click',()=>sendCommand('LOG'));
+ui.refreshHistoryButton.addEventListener('click',()=>{
+  if (!usb) return sendCommand('LOG');
+  nextCloudCheck=0; historySignature=''; requestState();
+});
 ui.exportLink.addEventListener('click',(event)=>{if(ui.exportLink.getAttribute('aria-disabled')==='true')event.preventDefault();});
 ui.setupButton.addEventListener('click',()=>{ui.setupDialog.showModal();requestState();});
 ui.closeSetupButton.addEventListener('click',()=>ui.setupDialog.close());
@@ -505,15 +531,15 @@ ui.setupDialog.addEventListener('click',(event)=>{
 ui.portSelect.addEventListener('change',render);
 ui.refreshPortsButton.addEventListener('click',async()=>{await requestState();flashMessage('Port list refreshed.','info',true);render();});
 ui.connectButton.addEventListener('click',async()=>{
-  const port=ui.portSelect.value;if(!port||mutationInFlight)return;
+  const port=ui.portSelect.value;if((!usb && !port)||mutationInFlight)return;
   mutationInFlight=true;setupFeedback=null;render();
-  try{await post('/api/connect',{port});flashMessage('Port opened. Waiting for the Arduino to identify itself.','info',true);}
+  try{if (usb) await usb.connect(); else await post('/api/connect',{port});flashMessage('Port opened. Waiting for the Arduino to identify itself.','info',true);}
   catch(error){flashMessage(error.name==='AbortError'?'Connection timed out. Check the cable and port.':error.message,'error',true,12000);}
   finally{mutationInFlight=false;await requestState();render();}
 });
 ui.disconnectButton.addEventListener('click',async()=>{
   if(mutationInFlight)return;mutationInFlight=true;render();
-  try{await post('/api/disconnect');awaitingCommand=null;flashMessage('Device disconnected.','info',true);}
+  try{if (usb) await usb.disconnect(); else await post('/api/disconnect');awaitingCommand=null;flashMessage('Device disconnected.','info',true);}
   catch(error){flashMessage(error.message,'error',true);}
   finally{mutationInFlight=false;await requestState();render();}
 });

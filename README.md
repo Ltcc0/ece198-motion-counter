@@ -2,6 +2,12 @@
 
 一个可以在 Mac 上演示的 Arduino 动作经过计数原型：HC-SR04 检测物体经过，UNO R4 Minima 计数并保存摘要，英文网页显示实时状态、次数和历史记录。固件、网页和本地连接程序都在这个文件夹中。
 
+## 在线使用
+
+打开 [STEPS 训练网站](https://sagacopilot.com/) 并用邮箱、密码注册或登录。**My progress** 可按日期查看本账号的训练记录，**Session records** 可导出 CSV。在线账号和记录保存在 Cloudflare D1，和离线演示的本机 SQLite 分开。
+
+做实时训练时，在连接 Arduino 的电脑上使用支持 Web Serial 的桌面浏览器（如 Chrome 或 Edge）。关闭占用串口的本机演示服务或串口监视器，在 **Device setup → Choose USB device** 中选择开发板，然后选择训练模式并开始。保持此标签页打开，直到板端确认保存、记录同步到账号。浏览器会为网络中断时已收到的保存回执重试同步。没有 USB 的设备也可登录查看历史。
+
 ## 每次演示的快速启动
 
 **首次按下面第 2 节上传一次固件后，以后每次只需：**
@@ -149,3 +155,7 @@ python3 -m venv .venv
 | `docs/SERIAL_PROTOCOL.md` | 固件串口命令与输出格式 |
 
 演示步骤和排查见 [Demo guide](docs/DEMO_GUIDE.md)，接口细节见 [Serial protocol](docs/SERIAL_PROTOCOL.md)。
+
+## Cloudflare 部署
+
+前端资源、Worker 入口和 D1 绑定见 `wrangler.jsonc`。首次初始化一个新实例时，创建 D1 并填入绑定 ID，运行 `npx wrangler d1 migrations apply ece198-motion-training --remote`，为 Worker 配置随机的 `PASSWORD_PEPPER` secret，然后运行 `npx wrangler deploy`。已有实例发布新版本时沿用原 secret，替换它会影响已有账号登录。

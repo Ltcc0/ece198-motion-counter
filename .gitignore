@@ -14,3 +14,5 @@ build/
 *.d
 *.log
 .pytest_cache/
+.wrangler/
+.dev.vars

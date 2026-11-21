@@ -35,7 +35,7 @@ form.addEventListener('submit', async event => {
     form.reset();
     location.replace('/');
   } catch (error) {
-    errorText.textContent = error.message || 'Unable to reach the local dashboard.';
+    errorText.textContent = error.message || 'Unable to reach the dashboard.';
     errorText.hidden = false;
   } finally {
     submit.disabled = toggle.disabled = false;
