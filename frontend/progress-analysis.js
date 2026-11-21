@@ -5,6 +5,7 @@ export function createTrainingReview(formatDuration, onUnauthorized) {
   const button = byId('analyzeButton');
   const status = byId('analysisStatus');
   const result = byId('analysisResult');
+  const measurements = byId('analysisMeasurements');
   let context;
   let scope;
   let pending;
@@ -24,7 +25,7 @@ export function createTrainingReview(formatDuration, onUnauthorized) {
     button.setAttribute('aria-busy', String(Boolean(pending)));
   }
 
-  function drawReview({first, last, total_days, included_days, review}) {
+  function drawMeasurements({first, last, total_days}) {
     const body = byId('analysisMetrics');
     body.replaceChildren();
     function row(label, passages, duration, pace) {
@@ -45,6 +46,10 @@ export function createTrainingReview(formatDuration, onUnauthorized) {
       row('Change', signed(last.passages - first.passages, String),
         signed(last.seconds - first.seconds, formatDuration), paceChange);
     }
+    measurements.hidden = false;
+  }
+
+  function drawReview({total_days, included_days, review}) {
     byId('analysisObservations').textContent = review.observations;
     byId('analysisPlan').textContent = review.next_session;
     byId('analysisTip').textContent = review.tip;
@@ -60,6 +65,7 @@ export function createTrainingReview(formatDuration, onUnauthorized) {
     pending = controller;
     message = 'DeepSeek is reviewing your training days…';
     result.hidden = true;
+    measurements.hidden = true;
     render();
     const timeout = setTimeout(() => controller.abort(), 40000);
     try {
@@ -74,6 +80,7 @@ export function createTrainingReview(formatDuration, onUnauthorized) {
       if (response.status === 401) { onUnauthorized(); return; }
       const data = await response.json();
       if (pending !== controller) return;
+      if (data.first && data.last) drawMeasurements(data);
       if (!response.ok) { message = data.message || 'Unable to generate a review. Try again.'; return; }
       drawReview(data);
     } catch {
@@ -93,6 +100,7 @@ export function createTrainingReview(formatDuration, onUnauthorized) {
         scope = nextScope;
         message = '';
         result.hidden = true;
+        measurements.hidden = true;
       }
       context = next;
       render();

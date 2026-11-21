@@ -1,4 +1,4 @@
-import {HttpError} from './http.js';
+import {HttpError, json} from './http.js';
 
 const MAX_DAYS = 90;
 const MODEL = 'deepseek-flash';
@@ -92,10 +92,17 @@ export async function analyzeTraining(env, accountId, bounds, ip) {
   const totalDays = results.reduce((sum, row) => sum + row.training_days, 0);
   const days = results.filter(row => row.period.length === 10).map(({period, through, training_days, ...day}) => day);
   const months = results.filter(row => row.period.length === 7);
-  const review = await askDeepSeek(env['ai-analysis'], {
-    training_days_in_range: totalDays,
-    middle_monthly_totals: months,
-    daily_totals: days
-  });
-  return {first: days[0], last: days.at(-1), total_days: totalDays, included_days: days.length, review};
+  const measurements = {first: days[0], last: days.at(-1), total_days: totalDays, included_days: days.length};
+  try {
+    const review = await askDeepSeek(env['ai-analysis'], {
+      training_days_in_range: totalDays,
+      middle_monthly_totals: months,
+      daily_totals: days
+    });
+    return json({...measurements, review});
+  } catch (error) {
+    if (!(error instanceof HttpError)) throw error;
+    // The measurement table is computed from D1 and remains available during a provider outage.
+    return json({...measurements, ok: false, message: error.message}, error.status);
+  }
 }

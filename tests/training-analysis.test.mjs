@@ -140,6 +140,10 @@ test('provider failures and incomplete output return a retryable error without l
     upstream = code;
     const response = await call();
     assert.equal(response.status, expected);
-    assert.doesNotMatch(await response.text(), /private error|synthetic-test-only|missing fields/);
+    const output = await response.json();
+    assert.equal(output.first.passages, 10);
+    assert.equal(output.last.passages_per_minute, 10);
+    assert.equal(output.review, undefined);
+    assert.doesNotMatch(output.message, /private error|synthetic-test-only|missing fields/);
   }
 });

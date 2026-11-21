@@ -175,7 +175,7 @@ async function dispatch(request, env) {
     return json({ok:true}, 200, {'Set-Cookie':cookie('', 0)});
   }
   if (request.method === 'POST' && path === '/api/progress/analysis') {
-    return json(await analyzeTraining(env, account.id, dates(url.searchParams), request.headers.get('CF-Connecting-IP')));
+    return analyzeTraining(env, account.id, dates(url.searchParams), request.headers.get('CF-Connecting-IP'));
   }
   if (request.method === 'POST' && path === '/api/sessions') {
     const values = capture(data);
