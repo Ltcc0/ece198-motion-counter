@@ -179,9 +179,13 @@ async function dispatch(request, env) {
   }
   if (request.method === 'POST' && path === '/api/sessions') {
     const values = capture(data);
-    await env.DB.prepare('INSERT INTO sessions(user_id,capture_key,device_id,id,training_mode,target,count,seconds,started_at,saved_at,training_day) VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(user_id,capture_key) DO NOTHING')
-      .bind(account.id,...values).run();
-    return json({ok:true});
+    const [, receipt] = await env.DB.batch([
+      env.DB.prepare('INSERT INTO sessions(user_id,capture_key,device_id,id,training_mode,target,count,seconds,started_at,saved_at,training_day) VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(user_id,capture_key) DO NOTHING')
+        .bind(account.id, ...values),
+      env.DB.prepare('SELECT row_id, id, training_day FROM sessions WHERE user_id=? AND capture_key=?')
+        .bind(account.id, data.capture_key)
+    ]);
+    return json({ok:true, record:receipt.results[0]});
   }
   if (request.method === 'GET' && path === '/api/state') {
     const revision = await env.DB.prepare('SELECT coalesce(max(row_id),0) AS n FROM sessions WHERE user_id=?').bind(account.id).first('n');

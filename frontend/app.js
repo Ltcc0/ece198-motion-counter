@@ -13,13 +13,14 @@ const ui = Object.fromEntries([
   'trainingTitle','accountEmail','logoutButton','dateFrom','dateTo','clearDates','recordRange',
   'trainingMode','targetField','targetLabel','trainingTarget','goalProgress','modeHint',
   'trendProtocol','trendTable','trendBody','trendSummary','trendNote','goalsHeader',
-  'heroConnect','liveTitle','totalSessions','totalPassages','totalDuration','rangeLabel','paceFigure','paceBars'
+  'reviewSavedButton','savedReviewScope','analyzeButton','heroConnect','liveTitle','totalSessions','totalPassages','totalDuration','rangeLabel','paceFigure','paceBars'
 ].map((id) => [id, $(id)]));
 
 const trainingReview = createTrainingReview(secondsText, showLogin);
 
 function refreshTrainingReview() {
   trainingReview.update({
+    saving: Boolean(state?.sync_pending),
     hosted: state?.transport === 'web-serial',
     configured: state?.analysis_available,
     online: apiAvailable,
@@ -29,6 +30,20 @@ function refreshTrainingReview() {
     to: ui.dateTo.value,
     hasRecords: recordData.history.length > 0
   });
+  const receipt = state?.completion;
+  const showShortcut = receipt?.status === 'saved' && !isRunning(state?.device) && state.analysis_available;
+  ui.reviewSavedButton.hidden = ui.savedReviewScope.hidden = !showShortcut;
+  if (showShortcut) {
+    const outside = excludesDay(receipt.training_day);
+    ui.savedReviewScope.textContent = outside ? 'DeepSeek will review all training dates to include this session.'
+      : 'DeepSeek reviews daily totals for your selected dates.';
+    ui.reviewSavedButton.disabled = !apiAvailable || state.sync_pending ||
+      ui.analyzeButton.getAttribute('aria-busy') === 'true' || (!outside && ui.analyzeButton.disabled);
+  }
+}
+
+function excludesDay(day) {
+  return (ui.dateFrom.value && day < ui.dateFrom.value) || (ui.dateTo.value && day > ui.dateTo.value);
 }
 
 let leavingDashboard = false;
@@ -50,6 +65,7 @@ let feedback = null;
 let setupFeedback = null;
 let priorCount = null;
 let historySignature = '';
+let historyRetryAt = Infinity;
 let portSignature = '';
 let currentPresentation = false;
 let countFlashTimer = null;
@@ -81,7 +97,7 @@ function connectionInfo() {
   const c = state?.connection || {};
   const d = state?.device || {};
   const received = number(c.last_received_at);
-  const connected = Boolean(c.connected) && apiAvailable;
+  const connected = Boolean(c.connected) && (Boolean(usb) || apiAvailable);
   const stale = connected && (Boolean(c.stale) || (received !== null && Date.now()/1000 - received > 6));
   const fresh = connected && !stale && received !== null && ['IDLE','RUNNING'].includes(word(d.state));
   return {c,d,connected,stale,fresh,received};
@@ -104,7 +120,7 @@ function render() {
   const knownMode = word(d.mode);
   const supportsPassage = knownMode === 'PASSAGE';
   let connectionText = 'Disconnected', connectionType = 'disconnected';
-  if (!apiAvailable) { connectionText = 'Server unavailable'; connectionType = 'error'; }
+  if (!connected && !apiAvailable) { connectionText = 'Server unavailable'; connectionType = 'error'; }
   else if (connected && stale) { connectionText = 'Connection interrupted'; connectionType = 'stale'; }
   else if (connected && !fresh) { connectionText = 'Connecting…'; }
   else if (connected) { connectionText = 'Device connected'; connectionType = 'connected'; }
@@ -112,7 +128,10 @@ function render() {
   ui.connectionLabel.textContent = connectionText;
   ui.connectionPill.dataset.status = connectionType;
 
-  const count = number(d.count);
+  // IDLE telemetry repeats the previous session's totals. Only Records shows finished sessions.
+  const ready = !running && fresh;
+  const idleValue = ready ? 0 : null;
+  const count = running ? number(d.count) : idleValue;
   ui.countValue.textContent = count === null ? '—' : Math.max(0,Math.floor(count)).toLocaleString('en-US');
   ui.countValue.setAttribute('aria-label', count === null ? 'No movement count available' : `${Math.max(0,Math.floor(count))} movements counted`);
   if (priorCount !== null && count !== null && count > priorCount && running && fresh) {
@@ -121,28 +140,28 @@ function render() {
     countFlashTimer = setTimeout(() => ui.countValue.classList.remove('count-bump'), 350);
   }
   priorCount = count;
-  ui.durationValue.textContent = secondsText(d.seconds);
+  ui.durationValue.textContent = secondsText(running ? d.seconds : idleValue);
   const distance = number(d.distance_cm);
   const validDistance = distance !== null && distance > 0;
   const sensor = word(d.sensor);
   ui.distanceValue.textContent = fresh && validDistance ? distance.toFixed(1) : fresh && /NO.?ECHO|NO.?TARGET|CLEAR|TOO_FAR/.test(sensor) ? 'Clear' : fresh && sensor === 'TOO_CLOSE' ? 'Too close' : '—';
   ui.distanceUnit.hidden = !fresh || !validDistance;
-  ui.sessionEyebrow.textContent = running && fresh ? 'LIVE SESSION' : count !== null && !running ? 'SESSION SUMMARY' : 'LIVE SESSION';
-  ui.liveTitle.textContent = running ? 'Session in progress' : count !== null && d.session_id ? 'Session summary' : 'Movement counter';
+  ui.sessionEyebrow.textContent = ready ? 'NEXT SESSION' : 'LIVE SESSION';
+  ui.liveTitle.textContent = running ? 'Session in progress' : 'Movement counter';
   ui.liveTitle.closest('.session-card').dataset.running = String(running && fresh);
   ui.heroConnect.hidden = connected;
   ui.heroConnect.disabled = !apiAvailable || Boolean(state?.device_busy);
   ui.startButton.hidden = !connected || running;
   ui.stopButton.hidden = !connected || !running;
-  const id = d.session_id;
+  const id = running ? d.session_id : null;
   ui.sessionId.textContent = id !== null && id !== undefined ? `Session ${String(id).padStart(3,'0')}` : running ? 'Session in progress' : '';
 
   let view = {state:'disconnected',title:'Waiting for connection'};
-  if (!apiAvailable) view = {state:'disconnected',title:'Server unavailable'};
+  if (!connected && !apiAvailable) view = {state:'disconnected',title:'Server unavailable'};
   else if (connected && stale) view = {state:'stale',title:'Waiting for a fresh reading'};
   else if (connected && !fresh) view = {state:'disconnected',title:'Waiting for the Arduino'};
   else if (fresh && knownMode && !supportsPassage) view = {state:'stopped',title:'Different counting mode — passage firmware required'};
-  else if (fresh && !running) view = {state:'stopped',title:count !== null && Number(count)>0?'Session stopped':'Ready to start'};
+  else if (fresh && !running) view = {state:'stopped',title:'Ready to start'};
   else if (fresh && running) {
     const phase = word(d.phase);
     if (phase === 'ARMED' || phase === 'READY') view = {state:'ready',title:'Ready for your next pass'};
@@ -154,7 +173,7 @@ function render() {
 
   renderTraining(running);
   const validTarget = selectedMode() === 'free' || ui.trainingTarget.validity.valid;
-  ui.startButton.disabled = !fresh || pending || running || !supportsPassage || !state?.account || !validTarget;
+  ui.startButton.disabled = !apiAvailable || !fresh || pending || running || !supportsPassage || !state?.account || !validTarget;
   ui.stopButton.disabled = !fresh || pending || !running;
   ui.refreshHistoryButton.disabled = !fresh || pending || running;
   ui.refreshPortsButton.disabled = mutationInFlight;
@@ -171,6 +190,7 @@ function render() {
   ui.startButton.setAttribute('aria-busy', String(awaitingCommand?.command === 'START'));
   ui.stopButton.setAttribute('aria-busy', String(awaitingCommand?.command === 'STOP'));
   const msg = currentMessage(feedback);
+  const completion = !running && state?.completion;
   if (state?.device_busy) {
     for (const control of [ui.startButton, ui.stopButton, ui.connectButton, ui.disconnectButton, ui.refreshHistoryButton]) control.disabled = true;
     ui.stateTitle.textContent = 'Device in use';
@@ -178,8 +198,15 @@ function render() {
   }
   else if (state?.storage_error) applyMessage(ui.actionFeedback, state.storage_error, 'error');
   else if (pending) applyMessage(ui.actionFeedback, awaitingCommand?.command === 'STOP' ? 'Waiting for the Arduino to stop and confirm the save…' : awaitingCommand?.command === 'START' ? 'Waiting for the Arduino to start…' : 'Waiting for the device response…');
+  else if (msg?.kind === 'error') applyMessage(ui.actionFeedback, msg.text, msg.kind);
+  else if (completion?.status === 'syncing') applyMessage(ui.actionFeedback, 'Session stopped. Saving to your account…');
+  else if (completion?.status === 'saved') applyMessage(ui.actionFeedback, 'Session ' + String(completion.id).padStart(3,'0') + ' saved to Records.', 'success');
+  else if (completion?.status === 'failed') applyMessage(ui.actionFeedback, 'The Arduino could not save this session.', 'error');
+  else if (completion?.status === 'unassigned') applyMessage(ui.actionFeedback, 'Saved on the board only. Start your next session from this account to track it.');
   else if (msg) applyMessage(ui.actionFeedback,msg.text,msg.kind);
-  else if (!apiAvailable) applyMessage(ui.actionFeedback,'Connection lost. Live controls are paused.','error');
+  else if (!apiAvailable) applyMessage(ui.actionFeedback, running && usb
+    ? 'Server offline. You can still stop this session and sync when connected.'
+    : 'Connection lost. Waiting for the server.', 'error');
   else if (!connected) applyMessage(ui.actionFeedback,'Connect your Arduino to begin.');
   else if (!fresh) applyMessage(ui.actionFeedback,'Waiting for a fresh device reading.');
   else if (!supportsPassage) applyMessage(ui.actionFeedback,'Waiting for passage-mode firmware identification.');
@@ -397,7 +424,8 @@ async function renderHistory() {
   const query = recordQuery().toString();
   ui.clearDates.hidden = !ui.dateFrom.value && !ui.dateTo.value;
   const signature = JSON.stringify([state.account.id, query, state.archive_revision]);
-  if (signature === historySignature) return;
+  if (signature === historySignature && Date.now() < historyRetryAt) return;
+  historyRetryAt = Infinity;
   historySignature = signature;
   const request = ++recordRequest;
   recordData = {history: [], reports: []};
@@ -418,7 +446,8 @@ async function renderHistory() {
     displayRecords();
   } catch (error) {
     if (request !== recordRequest) return;
-    ui.trendSummary.textContent = 'Cannot load records. Reopen Session records to retry.';
+    historyRetryAt = Date.now() + 5000;
+    ui.trendSummary.textContent = 'Waiting to load your records. Retrying…';
   }
 }
 
@@ -442,7 +471,8 @@ function settleCommand() {
     awaitingCommand=null;flashMessage('Session started. Clear the path, then make your first pass.','success');
   }else if(cmd==='STOP'&&saved){
     awaitingCommand=null;
-    if(state?.storage_error)flashMessage('Saved on the Arduino. The local copy could not be saved; open Session records for details.','error',false,10000);
+    if (usb) feedback = null;
+    else if(state?.storage_error)flashMessage('Saved on the Arduino. The local copy could not be saved; open Session records for details.','error',false,10000);
     else flashMessage('Session saved. Open Session records to view your result.','success');
   }else if(cmd==='STOP'&&saveFailed){
     awaitingCommand=null;flashMessage('Session stopped, but the Arduino reported a save failure. The record is not confirmed.','error',false,10000);
@@ -460,25 +490,27 @@ async function requestState() {
     const controller=new AbortController();const timeout=setTimeout(()=>controller.abort(),4000);
     try{
       let next = cloudState;
+      let online = apiAvailable;
       if (!usb || !cloudState || Date.now() >= nextCloudCheck) {
         const response=await fetch('/api/state?live=1',{cache:'no-store',signal:controller.signal});
         if(response.status===401){showLogin();return;}
         if(!response.ok)throw new Error(`Server returned ${response.status}`);
         next=await response.json();
+        if (state?.account && state.account.id !== next.account.id) { location.reload(); return; }
+        online = true;
         if (next.transport === 'web-serial') {
           if (!usb) {
             const {UsbTraining} = await import('/usb-training.js');
-            usb = new UsbTraining(next.account, () => {nextCloudCheck=0;historySignature='';});
+            usb = new UsbTraining(next.account);
           }
           cloudState = next;
           nextCloudCheck = Date.now() + 30000;
         }
       }
-      if (usb) next = {...next,...usb.snapshot()};
+      if (usb) next = {...next, ...usb.snapshot(), archive_revision:Math.max(next.archive_revision, usb.savedRevision)};
       if(!next||typeof next!=='object'||!next.connection)throw new Error('Invalid server response');
-      if (state?.account && state.account.id !== next.account.id) { location.reload(); return; }
       const previousPlan = state?.active_training;
-      if (previousPlan && !next.active_training && !awaitingCommand) {
+      if (!usb && previousPlan && !next.active_training && !awaitingCommand) {
         const result = [...next.events].reverse().find(event =>
           event.at >= previousPlan.started_at &&
           new RegExp('^(SAVED|SAVE_FAILED) id=' + previousPlan.id + '(?: |$)').test(event.text));
@@ -487,8 +519,16 @@ async function requestState() {
           else flashMessage('Session saved. Open Session records to review it.', 'success');
         }
       }
-      state=next;apiAvailable=true;renderPorts();settleCommand();render();
-    }catch(error){apiAvailable=false;render();}
+      state=next;apiAvailable=online;renderPorts();settleCommand();render();
+    }catch(error){
+      apiAvailable = false;
+      if (usb && cloudState) {
+        state = {...cloudState, ...usb.snapshot(), archive_revision:Math.max(cloudState.archive_revision, usb.savedRevision)};
+        settleCommand();
+        nextCloudCheck = Date.now() + 2000;
+      }
+      render();
+    }
     finally{clearTimeout(timeout);}
   })().finally(() => {fetchInFlight=null;});
   return fetchInFlight;
@@ -543,6 +583,18 @@ ui.trendProtocol.addEventListener('change', () => { protocolKey = ui.trendProtoc
 
 ui.startButton.addEventListener('click',()=>sendCommand('START'));
 ui.stopButton.addEventListener('click',()=>sendCommand('STOP'));
+ui.reviewSavedButton.addEventListener('click', async () => {
+  if (ui.reviewSavedButton.disabled || state?.completion?.status !== 'saved') return;
+  if (currentPresentation) ui.presentationButton.click();
+  if (excludesDay(state.completion.training_day)) {
+    ui.dateFrom.value = ui.dateTo.value = '';
+    await renderHistory();
+  }
+  location.hash = 'progress';
+  $('analysisPanel').scrollIntoView({block:'center'});
+  ui.analyzeButton.focus({preventScroll:true});
+  await trainingReview.analyze();
+});
 ui.refreshHistoryButton.addEventListener('click',()=>{
   if (!usb) return sendCommand('LOG');
   nextCloudCheck=0; historySignature=''; requestState();

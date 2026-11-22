@@ -94,9 +94,12 @@ button:disabled, [aria-disabled="true"] { opacity: .48; }
 #liveTitle { font-size: clamp(2.45rem, 3.75vw, 3.65rem); letter-spacing: -.02em; margin: 8px 0 6px; line-height: 1.04; }
 .action-feedback { color: #f4eee7; font-size: .94rem; line-height: 1.45; max-width: 39ch; }
 .action-feedback[data-kind="error"] { color: #ffdac8; font-weight: 650; }
-.session-actions { gap: 10px; margin-top: 20px; }
+.session-actions { flex-wrap: wrap; gap: 10px; margin-top: 20px; }
 .hero-primary { background: #ffab79; color: #311b0e; min-height: 42px; }
 .hero-primary:hover:not(:disabled) { background: #ffc29b; }
+.hero-secondary { background: #fff; color: var(--ink); min-height: 42px; }
+.hero-secondary:hover:not(:disabled) { background: #fff1e8; }
+#savedReviewScope { margin-top: 8px; color: #fff; }
 .metrics { display: grid; grid-template-columns: 1fr 1fr 1.08fr; margin: 0; padding: 22px 0; }
 .metric { padding: 0 24px; min-width: 0; }
 .metric + .metric { border-left: 1px solid var(--line); }

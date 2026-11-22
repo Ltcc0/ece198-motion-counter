@@ -8,9 +8,10 @@ const numberField = value => {
 };
 
 export class UsbTraining {
-  constructor(account, synced) {
+  constructor(account) {
     this.account = account;
-    this.synced = synced;
+    this.completion = null;
+    this.savedRevision = 0;
     this.device = blankDevice();
     this.port = null;
     this.reader = null;
@@ -32,6 +33,8 @@ export class UsbTraining {
         try { this.backlog.set(key, JSON.parse(localStorage.getItem(key))); } catch { /* Incomplete entry. */ }
       }
     }
+    const latest = [...this.backlog.values()].sort((a, b) => b.saved_at - a.saved_at)[0];
+    if (latest) this.completion = {status:'syncing', key:latest.capture_key, id:latest.id};
   }
 
   event(text, kind='info') {
@@ -50,7 +53,7 @@ export class UsbTraining {
       device:this.writer?'USB serial device':null, last_received_at:this.last,
       stale:this.last === null || t-this.last>3, error:this.error},
       active_training:this.plan && {...this.plan}, pending_command:this.pending?.command,
-      events:[...this.events], ports:[], storage_error:this.storageError};
+      events:[...this.events], ports:[], storage_error:this.storageError, completion:this.completion, sync_pending:this.backlog.size > 0};
   }
 
   async connect() {
@@ -147,6 +150,7 @@ export class UsbTraining {
       this.plan = plan ? {...plan,id,started_at:this.last,timezone:Intl.DateTimeFormat().resolvedOptions().timeZone,
         capture_key:crypto.randomUUID()} : null;
       this.pending = null;
+      this.completion = null;
       Object.assign(this.device,{session_id:id,state:'RUNNING',count:0,seconds:0});
       this.event(line,'success');
     } else if (f.REP && numberField(f.REP)!==null) {
@@ -161,12 +165,16 @@ export class UsbTraining {
         const key=this.prefix+row.capture_key;
         this.backlog.set(key,row);
         try { localStorage.setItem(key,JSON.stringify(row)); } catch { /* Keep retrying from memory. */ }
-        this.storageError='Saved on the board. Syncing your record…';
+        this.completion = {status:'syncing', key:row.capture_key, id};
+        this.storageError = null;
         this.nextRetry=0; this.sync();
+      } else if (!this.completion || this.completion.id !== id) {
+        this.completion = {status:'unassigned', id};
       }
       this.plan=this.pending=null;
       this.event(line,'success');
     } else if (line.startsWith('SAVE_FAILED ')) {
+      this.completion = {status:'failed', id:numberField(f.id)};
       this.device.state='IDLE'; this.plan=this.pending=null; this.event(line,'error');
     } else if (/^(Already |Unknown command|Session ID limit|Command too long)/.test(line)) {
       this.pending=null; this.event(line,'error');
@@ -182,7 +190,13 @@ export class UsbTraining {
         const response=await fetch('/api/sessions',{method:'POST', headers:{'Content-Type':'application/json',
           'X-Account-Id':String(this.account.id)},body:JSON.stringify(row),signal:AbortSignal.timeout(10000)});
         if (!response.ok) throw new Error('Upload failed');
-        localStorage.removeItem(key); this.backlog.delete(key); this.synced();
+        const {record} = await response.json();
+        if (record?.id !== row.id || !Number.isSafeInteger(record.row_id) || record.row_id < 1 || !record.training_day)
+          throw new Error('Missing database confirmation');
+        this.savedRevision = Math.max(this.savedRevision, record.row_id);
+        if (this.completion?.key === row.capture_key) this.completion = {status:'saved', ...record};
+        this.backlog.delete(key);
+        try { localStorage.removeItem(key); } catch { /* A later retry returns the same receipt. */ }
       }
       this.storageError=null;
     } catch { this.storageError='Saved on the board. Waiting to sync with your account.'; }

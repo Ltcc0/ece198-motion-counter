@@ -18,7 +18,7 @@ function fixture(t) {
   const env = {
     'ai-analysis': 'synthetic-test-only',
     ANALYSIS_LIMIT: {limit: async () => ({success: true})},
-    DB: {prepare(sql) {
+    DB: {batch: statements => Promise.all(statements.map(statement => statement.all())), prepare(sql) {
       const statement = sqlite.prepare(sql);
       return {bind(...args) { return {
         first: async key => { const row = statement.get(...args); return key ? row?.[key] : row; },
@@ -44,6 +44,30 @@ function fixture(t) {
 function completion(content = review) {
   return Response.json({choices: [{finish_reason: 'stop', message: {content: JSON.stringify(content)}}]});
 }
+
+test('a repeated Stop upload returns the same D1 receipt and counts once in Progress', async t => {
+  const {env, call} = fixture(t);
+  const session = {capture_key:crypto.randomUUID(), device_id:'usb:qa', id:8, training_mode:'free',
+    target:null, count:2, seconds:4, started_at:Date.UTC(2026, 0, 2) / 1000, timezone:'America/Toronto'};
+  session.saved_at = session.started_at + 4;
+  const capture = () => worker.fetch(new Request(origin + '/api/sessions', {
+    method:'POST', headers:{Origin:origin, 'Content-Type':'application/json',
+      Cookie:'__Host-steps_session=' + token, 'X-Account-Id':'1'}, body:JSON.stringify(session)
+  }), env);
+  const first = await capture();
+  assert.equal(first.status, 200);
+  const receipt = await first.json();
+  assert.equal(receipt.record.id, 8);
+  assert.ok(receipt.record.row_id > 0);
+  assert.equal(receipt.record.training_day, '2026-01-01');
+  assert.deepEqual(await (await capture()).json(), receipt);
+
+  t.mock.method(globalThis, 'fetch', async () => completion());
+  const result = await (await call()).json();
+  assert.equal(result.first.passages, 2);
+  assert.equal(result.first.seconds, 4);
+  assert.equal(result.first.passages_per_minute, 30);
+});
 
 test('D1 scopes daily counts, seconds and weighted pace to the signed-in account and inclusive dates', async t => {
   const {add, call} = fixture(t);

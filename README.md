@@ -8,7 +8,9 @@ Open the [STEPS training studio](https://sagacopilot.com/) and sign in or create
 
 For live training, connect the Arduino to the computer running a desktop browser with Web Serial support, such as Chrome or Edge. Close any local demo service or serial monitor using the port. Click **Connect device**, select **Choose USB device** in the **Device setup** panel, and choose your board. Select a training mode and click **Start session**.
 
-Keep the tab open until the board confirms the save and the session syncs to your account. If the network drops after the browser receives the board’s save confirmation, the browser retries the upload. You can review your history on another device without connecting an Arduino.
+Click **Stop & save** to end a session. Count and timed goals also stop automatically. When the Arduino stops, the live counter and timer reset for the next session. Keep the tab open until the studio shows **Session … saved to Records**. That confirmation comes from Cloudflare D1. Open **Records** to see the final count, duration, mode, and training date, including after you sign in on another device.
+
+If the upload is interrupted, the browser keeps the summary under the signed-in account and retries. Each session has a unique capture key so a retry produces a single record. Once saved, choose **Analyze training** on the training card to open the AI review in Progress and request a plan. The shortcut uses your selected dates. If they exclude the saved session, the shortcut shows that it will review all dates. You can also choose your own range in **Progress** and run the review there.
 
 ## Training studio screenshots
 

@@ -18,9 +18,10 @@ export function createTrainingReview(formatDuration, onUnauthorized) {
     if (!context.online) hint = 'Reconnect to the server to analyze your training.';
     else if (!context.configured) hint = 'DeepSeek analysis is awaiting site activation.';
     else if (context.from && context.to && context.from > context.to) hint = 'Choose an end date on or after the start date.';
+    else if (context.saving) hint = 'Your session is syncing. Analysis will be ready after it is saved.';
     else if (!context.hasRecords) hint = 'Save a session or select dates with training to get a review.';
     if (status.textContent !== hint) status.textContent = hint;
-    button.disabled = Boolean(pending) || !context.online || !context.configured || !context.hasRecords ||
+    button.disabled = Boolean(pending) || !context.online || !context.configured || context.saving || !context.hasRecords ||
       Boolean(context.from && context.to && context.from > context.to);
     button.setAttribute('aria-busy', String(Boolean(pending)));
   }
@@ -59,7 +60,7 @@ export function createTrainingReview(formatDuration, onUnauthorized) {
     result.hidden = false;
   }
 
-  button.addEventListener('click', async () => {
+  async function analyze() {
     if (button.disabled) return;
     const controller = new AbortController();
     pending = controller;
@@ -89,11 +90,13 @@ export function createTrainingReview(formatDuration, onUnauthorized) {
       clearTimeout(timeout);
       if (pending === controller) { pending = null; render(); }
     }
-  });
+  }
 
+  button.addEventListener('click', analyze);
   return {
+    analyze,
     update(next) {
-      const nextScope = JSON.stringify([next.accountId, next.from, next.to, next.revision, next.configured]);
+      const nextScope = JSON.stringify([next.accountId, next.from, next.to, next.revision, next.configured, next.saving]);
       if (scope !== nextScope) {
         pending?.abort();
         pending = null;
